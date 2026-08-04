@@ -1,0 +1,248 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function verified() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
+    function memberPath(householdId) {
+      return /databases/$(database)/documents/households/$(householdId)/members/$(request.auth.uid);
+    }
+
+    function isMember(householdId) {
+      return verified() &&
+        exists(memberPath(householdId)) &&
+        get(memberPath(householdId)).data.status == 'active';
+    }
+
+    function isManager(householdId) {
+      return isMember(householdId) &&
+        get(memberPath(householdId)).data.role in ['owner', 'admin'];
+    }
+
+    function canContribute(householdId) {
+      return isMember(householdId) &&
+        get(memberPath(householdId)).data.role in ['owner', 'admin', 'member'];
+    }
+
+    function validCipher(payload) {
+      return payload is map &&
+        payload.keys().hasOnly(['v', 'alg', 'ct', 'iv', 'tag']) &&
+        payload.v == 1 &&
+        payload.alg == 'A256GCM' &&
+        payload.ct is string && payload.ct.size() > 0 && payload.ct.size() <= 100000 &&
+        payload.iv is string && payload.iv.size() >= 12 && payload.iv.size() <= 64 &&
+        payload.tag is string && payload.tag.size() >= 16 && payload.tag.size() <= 64;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.keys().hasOnly([
+          'displayName', 'phoneNumber', 'photoUrl', 'activeHouseholdId',
+          'householdIds', 'createdAt', 'updatedAt', 'termsVersion',
+          'termsAcceptedAt'
+        ]) &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() <= 60 &&
+        request.resource.data.get('phoneNumber', '') is string &&
+        request.resource.data.get('phoneNumber', '').size() <= 24 &&
+        (request.resource.data.get('photoUrl', null) == null ||
+          (request.resource.data.get('photoUrl', null) is string &&
+            request.resource.data.get('photoUrl', '').size() <= 2048)) &&
+        request.resource.data.activeHouseholdId == null &&
+        request.resource.data.householdIds is list &&
+        request.resource.data.householdIds.size() == 0 &&
+        request.resource.data.get('termsVersion', '') is string &&
+        request.resource.data.get('termsVersion', '').size() <= 20;
+      allow update: if signedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'phoneNumber', 'photoUrl', 'activeHouseholdId', 'updatedAt'
+        ]) &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() <= 60 &&
+        request.resource.data.get('phoneNumber', '') is string &&
+        request.resource.data.get('phoneNumber', '').size() <= 24 &&
+        (request.resource.data.get('photoUrl', null) == null ||
+          (request.resource.data.get('photoUrl', null) is string &&
+            request.resource.data.get('photoUrl', '').size() <= 2048)) &&
+        (
+          request.resource.data.activeHouseholdId == null ||
+          isMember(request.resource.data.activeHouseholdId)
+        );
+      allow delete: if false;
+
+      match /devices/{deviceId} {
+        allow read, delete: if signedIn() && request.auth.uid == userId;
+        allow create, update: if signedIn() &&
+          request.auth.uid == userId &&
+          request.resource.data.keys().hasOnly(['token', 'platform', 'updatedAt']) &&
+          request.resource.data.token is string &&
+          request.resource.data.token.size() > 20 &&
+          request.resource.data.token.size() <= 4096 &&
+          request.resource.data.platform in ['android', 'ios'] &&
+          request.resource.data.updatedAt is timestamp;
+      }
+    }
+
+    match /households/{householdId} {
+      allow read: if isMember(householdId);
+      allow create, delete: if false;
+      allow update: if isManager(householdId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'privatePayload', 'updatedAt'
+        ]) &&
+        validCipher(request.resource.data.privatePayload);
+
+      match /members/{memberId} {
+        allow read: if isMember(householdId);
+        allow create, delete: if false;
+        allow update: if isMember(householdId) &&
+          request.auth.uid == memberId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'privatePayload'
+          ]) &&
+          validCipher(request.resource.data.privatePayload);
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isMember(householdId);
+        allow create: if canContribute(householdId) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'type', 'occurredAt', 'createdAt', 'updatedAt',
+            'createdBy', 'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.type in ['income', 'expense', 'saving'] &&
+          request.resource.data.occurredAt is timestamp &&
+          request.resource.data.createdAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.createdBy == request.auth.uid &&
+          validCipher(request.resource.data.payload);
+        allow update: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId)) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'type', 'occurredAt', 'createdAt', 'updatedAt',
+            'createdBy', 'payload'
+          ]) &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.type in ['income', 'expense', 'saving'] &&
+          request.resource.data.occurredAt is timestamp &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt is timestamp &&
+          validCipher(request.resource.data.payload);
+        allow delete: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId));
+      }
+
+      match /plans/{planId} {
+        allow read: if isMember(householdId);
+        allow create: if canContribute(householdId) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'kind', 'createdAt', 'updatedAt', 'createdBy', 'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.kind in ['budget', 'goal'] &&
+          request.resource.data.createdAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.createdBy == request.auth.uid &&
+          validCipher(request.resource.data.payload);
+        allow update: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId)) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'kind', 'createdAt', 'updatedAt', 'createdBy', 'payload'
+          ]) &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          request.resource.data.kind == resource.data.kind &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt is timestamp &&
+          validCipher(request.resource.data.payload);
+        allow delete: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId));
+      }
+
+      match /recurring/{recurringId} {
+        allow read: if isMember(householdId);
+        allow create: if canContribute(householdId) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'frequency', 'nextDueAt', 'active',
+            'confirmBeforePosting', 'createdAt', 'updatedAt', 'createdBy',
+            'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.frequency in ['weekly', 'biweekly', 'monthly', 'yearly'] &&
+          request.resource.data.nextDueAt is timestamp &&
+          request.resource.data.active is bool &&
+          request.resource.data.confirmBeforePosting is bool &&
+          request.resource.data.createdAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.createdBy == request.auth.uid &&
+          validCipher(request.resource.data.payload);
+        allow update: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId)) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'frequency', 'nextDueAt', 'active',
+            'confirmBeforePosting', 'createdAt', 'updatedAt', 'createdBy',
+            'payload'
+          ]) &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.updatedAt is timestamp &&
+          validCipher(request.resource.data.payload);
+        allow delete: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId));
+      }
+
+      match /categories/{categoryId} {
+        allow read: if isMember(householdId);
+        allow create: if canContribute(householdId) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'type', 'createdAt', 'updatedAt', 'createdBy',
+            'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.type in ['income', 'expense', 'saving'] &&
+          request.resource.data.createdAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.createdBy == request.auth.uid &&
+          validCipher(request.resource.data.payload);
+        allow update: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId)) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'type', 'createdAt', 'updatedAt', 'createdBy',
+            'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.type == resource.data.type &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          request.resource.data.updatedAt is timestamp &&
+          validCipher(request.resource.data.payload);
+        allow delete: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId));
+      }
+    }
+
+    match /invitations/{invitationId} {
+      allow read, write: if false;
+    }
+
+    match /internalRateLimits/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

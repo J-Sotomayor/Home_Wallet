@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>HomeWallet monochrome symbol</title>
+  <path d="M252 438 512 226l260 212" fill="none" stroke="#000000" stroke-width="84" stroke-linecap="round" stroke-linejoin="round"/>
+  <path fill="#000000" fill-rule="evenodd" d="M300 407h424c52 0 94 42 94 94v202c0 52-42 94-94 94H610V609c0-30-24-54-54-54h-88c-30 0-54 24-54 54v188H300c-52 0-94-42-94-94V501c0-52 42-94 94-94Zm390 80a68 68 0 1 0 0 136 68 68 0 0 0 0-136Zm-35 67 23 24 48-52 18 17-66 70-41-42 18-17Z"/>
+</svg>

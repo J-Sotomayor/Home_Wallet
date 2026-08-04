@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400" viewBox="0 0 1600 400">
+  <title>HomeWallet horizontal logo</title>
+  <g transform="translate(38 30) scale(.332)">
+    <rect width="1024" height="1024" rx="224" fill="#2563EB"/>
+    <path d="M252 438 512 226l260 212" fill="none" stroke="#FFFFFF" stroke-width="84" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="206" y="407" width="612" height="390" rx="94" fill="#FFFFFF"/>
+    <path d="M414 609c0-30 24-54 54-54h88c30 0 54 24 54 54v188H414V609Z" fill="#2563EB"/>
+    <circle cx="337" cy="559" r="35" fill="#E8B4BC"/>
+    <circle cx="690" cy="555" r="68" fill="#10B981"/>
+    <path d="m655 554 23 24 48-52" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="426" y="252" fill="#1F2937" font-family="Inter, Arial, sans-serif" font-size="178" font-weight="750" letter-spacing="-7">Home</text>
+  <text x="890" y="252" fill="#2563EB" font-family="Inter, Arial, sans-serif" font-size="178" font-weight="750" letter-spacing="-7">Wallet</text>
+</svg>

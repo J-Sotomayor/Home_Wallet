@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "472403004735",
+    "project_id": "homewallet-prod",
+    "storage_bucket": "homewallet-prod.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:472403004735:android:31279f29e54d70cc54178a",
+        "android_client_info": {
+          "package_name": "com.homewallet.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "472403004735-k95f6p0pa1ipjce1vqo40re7as5cata5.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.homewallet.app",
+            "certificate_hash": "614c24789e673df12042117066ab74b750e9bec7"
+          }
+        },
+        {
+          "client_id": "472403004735-0fmvjcfhuoket53k4jfjfmiserk6ijne.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUehGhse5KBIDHRqivZU5ewyUeprSce2c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "472403004735-0fmvjcfhuoket53k4jfjfmiserk6ijne.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "472403004735-jdah9mo075lq7bnugp7unb8p3hfh4d27.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.homewallet.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

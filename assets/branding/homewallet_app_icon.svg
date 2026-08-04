@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>HomeWallet app icon</title>
+  <desc>A home roof integrated with a rounded wallet, a savings check and a warm family detail.</desc>
+  <rect width="1024" height="1024" fill="#2563EB"/>
+  <path d="M252 438 512 226l260 212" fill="none" stroke="#FFFFFF" stroke-width="84" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="206" y="407" width="612" height="390" rx="94" fill="#FFFFFF"/>
+  <path d="M414 609c0-30 24-54 54-54h88c30 0 54 24 54 54v188H414V609Z" fill="#2563EB"/>
+  <circle cx="337" cy="559" r="35" fill="#E8B4BC"/>
+  <circle cx="690" cy="555" r="68" fill="#10B981"/>
+  <path d="m655 554 23 24 48-52" fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
