@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "472403004735-hsaldin47u4up1665rgso5qs1uf9rlki.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.homewallet.app",
+            "certificate_hash": "e5bfe7b0efd0daa30d0e843526b8dc2814181f72"
+          }
+        },
+        {
           "client_id": "472403004735-k95f6p0pa1ipjce1vqo40re7as5cata5.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {

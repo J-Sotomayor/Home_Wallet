@@ -1,0 +1,63 @@
+name: Validate iOS Simulator
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ios-simulator.yml
+      - ios/**
+      - lib/**
+      - assets/**
+      - pubspec.yaml
+      - pubspec.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homewallet-ios-simulator
+  cancel-in-progress: true
+
+jobs:
+  build-ios-simulator:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.29.2
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze project
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Build unsigned iOS Simulator app
+        run: flutter build ios --simulator --debug --no-codesign
+
+      - name: Package simulator app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios/iphonesimulator/Runner.app \
+            HomeWallet-iOS-Simulator.zip
+
+      - name: Upload simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomeWallet-iOS-Simulator
+          path: HomeWallet-iOS-Simulator.zip
+          if-no-files-found: error
+          retention-days: 7
