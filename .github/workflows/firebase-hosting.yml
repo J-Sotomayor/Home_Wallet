@@ -1,0 +1,60 @@
+name: Deploy Firebase Hosting
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: firebase-hosting-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: homewallet-prod
+          workload_identity_provider: projects/472403004735/locations/global/workloadIdentityPools/github-actions/providers/homewallet
+          service_account: github-action-1322363299@homewallet-prod.iam.gserviceaccount.com
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.29.2
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build web app
+        run: flutter build web --release
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@14.25.0
+
+      - name: Deploy to Firebase Hosting
+        run: firebase deploy --only hosting --project homewallet-prod --non-interactive
