@@ -6,6 +6,7 @@ import '../../../core/security/household_crypto_service.dart';
 import '../../../core/security/secure_key_store.dart';
 import '../domain/finance_models.dart';
 import '../domain/transaction_categories.dart';
+import '../domain/transaction_validation.dart';
 
 abstract interface class FinanceRepository {
   Stream<List<FinanceTransaction>> watchTransactions(String householdId);
@@ -386,7 +387,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       splitMode: splitMode,
       participantSharesMinor: shared ? participantSharesMinor : const {},
     );
-    _validateTransaction(draft);
+    validateTransactionDraft(draft);
     if (linkedPlan != null) {
       if (linkedPlan.kind != FinancePlanKind.goal || !linkedPlan.isActive) {
         throw const AppException('Selecciona una meta activa.');
@@ -493,7 +494,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       participantSharesMinor: shared ? participantSharesMinor : const {},
       settledParticipantIds: original.settledParticipantIds,
     );
-    _validateTransaction(updated);
+    validateTransactionDraft(updated);
     if (updated.fundingSource == ExpenseFundingSource.goal &&
         linkedPlan == null) {
       throw const AppException('Selecciona la meta de la que salió el dinero.');
@@ -580,7 +581,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
     required DateTime nextDueAt,
     bool confirmBeforePosting = true,
   }) async {
-    _validateTransaction(template);
+    validateTransactionDraft(template, enforceHistoryWindow: false);
     if (!nextDueAt.isAfter(
       DateTime.now().subtract(const Duration(minutes: 1)),
     )) {
@@ -620,7 +621,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
     required String householdId,
     required RecurringTransaction recurring,
   }) async {
-    _validateTransaction(recurring.template);
+    validateTransactionDraft(recurring.template, enforceHistoryWindow: false);
     try {
       final key = await _requireKey(householdId);
       await _firestore
@@ -670,32 +671,65 @@ class FirebaseFinanceRepository implements FinanceRepository {
     required RecurringTransaction recurring,
   }) async {
     final template = recurring.template;
-    await addTransaction(
-      householdId: householdId,
-      uid: uid,
+    validateTransactionDraft(template, enforceHistoryWindow: false);
+    final postedAt = DateTime.now();
+    final posted = FinanceTransactionDraft(
       description: template.description,
       category: template.category,
       amountMinor: template.amountMinor,
+      occurredAt: postedAt,
       type: template.type,
       shared: template.shared,
-      occurredAt: DateTime.now(),
       fundingSource: template.fundingSource,
-      paidByUid: template.paidByUid,
+      paidByUid: template.paidByUid ?? uid,
       splitMode: template.splitMode,
       participantSharesMinor: template.participantSharesMinor,
     );
-    await updateRecurring(
-      householdId: householdId,
-      recurring: RecurringTransaction(
-        id: recurring.id,
-        template: recurring.template,
-        frequency: recurring.frequency,
-        nextDueAt: recurring.frequency.next(recurring.nextDueAt),
-        createdBy: recurring.createdBy,
-        active: recurring.active,
-        confirmBeforePosting: recurring.confirmBeforePosting,
-      ),
-    );
+    validateTransactionDraft(posted);
+    try {
+      final key = await _requireKey(householdId);
+      final dueId = recurring.nextDueAt.millisecondsSinceEpoch;
+      final transactionReference = _firestore
+          .collection('households')
+          .doc(householdId)
+          .collection('transactions')
+          .doc('recurring_${recurring.id}_$dueId');
+      final recurringReference = _firestore
+          .collection('households')
+          .doc(householdId)
+          .collection('recurring')
+          .doc(recurring.id);
+      final transactionPayload = await _encryptTransactionPayload(
+        householdId: householdId,
+        referenceId: transactionReference.id,
+        transaction: posted,
+        key: key,
+      );
+      final recurringPayload = await _encryptRecurringPayload(
+        householdId: householdId,
+        referenceId: recurring.id,
+        transaction: template,
+        key: key,
+      );
+      final batch = _firestore.batch();
+      batch.set(
+        transactionReference,
+        _transactionDocument(posted, uid, transactionPayload),
+      );
+      batch.update(recurringReference, {
+        'frequency': recurring.frequency.name,
+        'nextDueAt': Timestamp.fromDate(
+          recurring.frequency.next(recurring.nextDueAt),
+        ),
+        'active': recurring.active,
+        'confirmBeforePosting': recurring.confirmBeforePosting,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'payload': recurringPayload,
+      });
+      await batch.commit();
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
   }
 
   @override
@@ -786,7 +820,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       );
     }
     for (final transaction in transactions) {
-      _validateTransaction(transaction);
+      validateTransactionDraft(transaction);
     }
     try {
       final key = await _requireKey(householdId);
@@ -809,57 +843,6 @@ class FirebaseFinanceRepository implements FinanceRepository {
       await batch.commit();
     } catch (error) {
       throw mapFirebaseError(error);
-    }
-  }
-
-  static void _validateTransaction(FinanceTransactionDraft transaction) {
-    final cleanDescription = transaction.description.trim();
-    if (cleanDescription.isEmpty || cleanDescription.length > 100) {
-      throw const AppException(
-        'La descripción debe tener entre 1 y 100 caracteres.',
-      );
-    }
-    if (transaction.amountMinor <= 0 || transaction.amountMinor > 99999999999) {
-      throw const AppException('El monto ingresado no es válido.');
-    }
-    final occurredDay = DateTime(
-      transaction.occurredAt.year,
-      transaction.occurredAt.month,
-      transaction.occurredAt.day,
-    );
-    final today = DateTime.now();
-    final currentDay = DateTime(today.year, today.month, today.day);
-    if (occurredDay.isBefore(_transactionCutoff()) ||
-        occurredDay.isAfter(currentDay)) {
-      throw const AppException(
-        'HomeWallet conserva únicamente movimientos de los últimos 365 días.',
-      );
-    }
-    final cleanCategory = transaction.category.trim();
-    if (cleanCategory.isEmpty || cleanCategory.length > 40) {
-      throw const AppException('La categoría seleccionada no es válida.');
-    }
-    if (transaction.shared &&
-        transaction.type == TransactionType.expense &&
-        transaction.participantSharesMinor.isNotEmpty) {
-      if (transaction.participantSharesMinor.values.any((value) => value < 0) ||
-          transaction.participantSharesMinor.values.fold<int>(
-                0,
-                (total, value) => total + value,
-              ) !=
-              transaction.amountMinor) {
-        throw const AppException(
-          'La distribución del gasto debe sumar exactamente el monto total.',
-        );
-      }
-      if (transaction.paidByUid == null ||
-          !transaction.participantSharesMinor.containsKey(
-            transaction.paidByUid,
-          )) {
-        throw const AppException(
-          'Selecciona quién pagó y los participantes del gasto.',
-        );
-      }
     }
   }
 
