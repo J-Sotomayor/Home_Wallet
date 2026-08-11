@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "test:rules": "node --test test/firestore.rules.test.mjs",
+    "test:storage-rules": "node --test test/storage.rules.test.mjs",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth,storage",
     "deploy": "firebase deploy --only functions"
   },

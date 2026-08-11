@@ -6,6 +6,23 @@ import 'package:pdf/widgets.dart' as pw;
 
 import '../domain/finance_models.dart';
 
+enum TransactionExportScope { homeWallet, imported, all }
+
+List<FinanceTransaction> transactionsForExport(
+  Iterable<FinanceTransaction> transactions,
+  TransactionExportScope scope,
+) => switch (scope) {
+  TransactionExportScope.homeWallet =>
+    transactions
+        .where((item) => item.origin == TransactionOrigin.manual)
+        .toList(),
+  TransactionExportScope.imported =>
+    transactions
+        .where((item) => item.origin == TransactionOrigin.imported)
+        .toList(),
+  TransactionExportScope.all => transactions.toList(),
+};
+
 class TransactionExportService {
   const TransactionExportService();
 

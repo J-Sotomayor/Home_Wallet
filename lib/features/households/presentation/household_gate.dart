@@ -6,6 +6,7 @@ import '../../../app/theme/theme_controller.dart';
 import '../../../app/widgets/homewallet_logo.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../home/presentation/home_shell.dart';
+import '../../onboarding/presentation/category_setup_screen.dart';
 import 'family_invite_screen.dart';
 import 'household_setup_screen.dart';
 
@@ -27,6 +28,7 @@ class HouseholdGate extends StatefulWidget {
 
 class _HouseholdGateState extends State<HouseholdGate> {
   late Stream<String?> _householdStream;
+  String? _confirmedHouseholdId;
 
   @override
   void initState() {
@@ -41,6 +43,7 @@ class _HouseholdGateState extends State<HouseholdGate> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.uid != widget.user.uid ||
         oldWidget.services.households != widget.services.households) {
+      _confirmedHouseholdId = null;
       _householdStream = widget.services.households.watchActiveHouseholdId(
         widget.user.uid,
       );
@@ -49,6 +52,13 @@ class _HouseholdGateState extends State<HouseholdGate> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.user.needsOnboarding) {
+      return CategorySetupScreen(
+        user: widget.user,
+        repository: widget.services.auth,
+        onSignOut: widget.services.auth.signOut,
+      );
+    }
     return StreamBuilder<String?>(
       stream: _householdStream,
       builder: (context, snapshot) {
@@ -63,12 +73,15 @@ class _HouseholdGateState extends State<HouseholdGate> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        final householdId = snapshot.data;
+        final householdId = _confirmedHouseholdId ?? snapshot.data;
         if (householdId == null || householdId.isEmpty) {
           return HouseholdSetupScreen(
             user: widget.user,
             repository: widget.services.households,
             onSignOut: widget.services.auth.signOut,
+            onHouseholdCreated: (value) {
+              if (mounted) setState(() => _confirmedHouseholdId = value);
+            },
           );
         }
         return _HouseholdKeyGate(

@@ -26,6 +26,8 @@
 		<string>HomeWallet usa la cámara únicamente para escanear invitaciones QR de tu hogar.</string>
 		<key>NSFaceIDUsageDescription</key>
 		<string>HomeWallet usa Face ID para proteger el acceso a tus finanzas familiares.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>HomeWallet accede a la foto que elijas para configurar tu perfil.</string>
 		<key>LSRequiresIPhoneOS</key>
 		<true/>
 		<key>UILaunchStoryboardName</key>

@@ -132,25 +132,36 @@ abstract final class TransactionImportRules {
     ])) {
       return 'Alimentación';
     }
-    if (_containsAny(value, const [
-      'arriendo',
-      'alquiler',
-      'hipoteca',
-      'condominio',
-    ])) {
+    if (_containsAny(value, const ['arriendo', 'alquiler'])) {
+      return 'Arriendo';
+    }
+    if (_containsAny(value, const ['hipoteca', 'condominio'])) {
       return 'Vivienda';
     }
     if (_containsAny(value, const [
-      'luz',
-      'agua',
-      'internet',
+      'eee quito',
+      'empresa electrica',
+      'planilla de luz',
+    ])) {
+      return 'Luz';
+    }
+    if (_containsAny(value, const ['agua potable', 'planilla de agua'])) {
+      return 'Agua';
+    }
+    if (_containsAny(value, const ['internet', 'paquetes cnt', 'netlife'])) {
+      return 'Internet';
+    }
+    if (_containsAny(value, const ['gas domiciliario', 'cilindro de gas'])) {
+      return 'Gas';
+    }
+    if (_containsAny(value, const [
       'telefono',
       'movistar',
       'claro',
       'servicio digital',
       'github',
     ])) {
-      return 'Servicios';
+      return 'Servicios básicos';
     }
     if (_containsAny(value, const [
       'gasolina',
@@ -288,7 +299,7 @@ abstract final class TransactionImportRules {
       'comida': 'Alimentación',
       'alimentos': 'Alimentación',
       'hogar': 'Vivienda',
-      'servicios basicos': 'Servicios',
+      'servicios basicos': 'Servicios básicos',
       'movilidad': 'Transporte',
       'medicina': 'Salud',
       'estudios': 'Educación',

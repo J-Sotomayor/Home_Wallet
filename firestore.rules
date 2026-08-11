@@ -47,7 +47,8 @@ service cloud.firestore {
         request.resource.data.keys().hasOnly([
           'displayName', 'phoneNumber', 'photoUrl', 'activeHouseholdId',
           'householdIds', 'createdAt', 'updatedAt', 'termsVersion',
-          'termsAcceptedAt'
+          'termsAcceptedAt', 'onboardingCompleted', 'onboardingCompletedAt',
+          'preferredCategories'
         ]) &&
         request.resource.data.displayName is string &&
         request.resource.data.displayName.size() <= 60 &&
@@ -59,17 +60,25 @@ service cloud.firestore {
         request.resource.data.activeHouseholdId == null &&
         request.resource.data.householdIds is list &&
         request.resource.data.householdIds.size() == 0 &&
+        request.resource.data.get('onboardingCompleted', false) is bool &&
+        request.resource.data.get('preferredCategories', []) is list &&
+        request.resource.data.get('preferredCategories', []).size() <= 80 &&
         request.resource.data.get('termsVersion', '') is string &&
         request.resource.data.get('termsVersion', '').size() <= 20;
       allow update: if signedIn() &&
         request.auth.uid == userId &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'displayName', 'phoneNumber', 'photoUrl', 'activeHouseholdId', 'updatedAt'
+          'displayName', 'phoneNumber', 'photoUrl', 'activeHouseholdId',
+          'updatedAt', 'onboardingCompleted', 'onboardingCompletedAt',
+          'preferredCategories'
         ]) &&
         request.resource.data.displayName is string &&
         request.resource.data.displayName.size() <= 60 &&
         request.resource.data.get('phoneNumber', '') is string &&
         request.resource.data.get('phoneNumber', '').size() <= 24 &&
+        request.resource.data.get('onboardingCompleted', true) is bool &&
+        request.resource.data.get('preferredCategories', []) is list &&
+        request.resource.data.get('preferredCategories', []).size() <= 80 &&
         (request.resource.data.get('photoUrl', null) == null ||
           (request.resource.data.get('photoUrl', null) is string &&
             request.resource.data.get('photoUrl', '').size() <= 2048)) &&
@@ -87,7 +96,7 @@ service cloud.firestore {
           request.resource.data.token is string &&
           request.resource.data.token.size() > 20 &&
           request.resource.data.token.size() <= 4096 &&
-          request.resource.data.platform in ['android', 'ios'] &&
+          request.resource.data.platform in ['android', 'ios', 'web'] &&
           request.resource.data.updatedAt is timestamp;
       }
     }
@@ -122,6 +131,8 @@ service cloud.firestore {
           request.resource.data.schemaVersion == 1 &&
           request.resource.data.type in ['income', 'expense', 'saving'] &&
           request.resource.data.occurredAt is timestamp &&
+          request.resource.data.occurredAt >= request.time - duration.value(365, 'd') &&
+          request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
           request.resource.data.createdAt is timestamp &&
           request.resource.data.updatedAt is timestamp &&
           request.resource.data.createdBy == request.auth.uid &&
@@ -136,6 +147,43 @@ service cloud.firestore {
           request.resource.data.schemaVersion == 1 &&
           request.resource.data.type in ['income', 'expense', 'saving'] &&
           request.resource.data.occurredAt is timestamp &&
+          request.resource.data.occurredAt >= request.time - duration.value(365, 'd') &&
+          request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.updatedAt is timestamp &&
+          validCipher(request.resource.data.payload);
+        allow delete: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId));
+      }
+
+      // Bill splits are deliberately stored apart from financial movements.
+      // They track reimbursements and never alter household balances.
+      match /sharedExpenses/{expenseId} {
+        allow read: if isMember(householdId);
+        allow create: if canContribute(householdId) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'occurredAt', 'createdAt', 'updatedAt',
+            'createdBy', 'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.occurredAt is timestamp &&
+          request.resource.data.occurredAt >= timestamp.date(2000, 1, 1) &&
+          request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
+          request.resource.data.createdAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.createdBy == request.auth.uid &&
+          validCipher(request.resource.data.payload);
+        allow update: if canContribute(householdId) &&
+          (resource.data.createdBy == request.auth.uid || isManager(householdId)) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'occurredAt', 'createdAt', 'updatedAt',
+            'createdBy', 'payload'
+          ]) &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.occurredAt == resource.data.occurredAt &&
+          request.resource.data.occurredAt >= timestamp.date(2000, 1, 1) &&
+          request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
           request.resource.data.createdAt == resource.data.createdAt &&
           request.resource.data.updatedAt is timestamp &&
           validCipher(request.resource.data.payload);

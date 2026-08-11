@@ -38,6 +38,88 @@ enum ExpenseSplitMode {
   };
 }
 
+/// A bill split is intentionally separate from the household cash flow.
+///
+/// It answers "who paid and how much does each person owe?" without changing
+/// income, available balance, savings, goals, or financial reports.
+class SharedExpense {
+  const SharedExpense({
+    required this.id,
+    required this.description,
+    required this.category,
+    required this.totalMinor,
+    required this.occurredAt,
+    required this.createdBy,
+    required this.paidByUid,
+    required this.splitMode,
+    required this.participantSharesMinor,
+    this.settledParticipantIds = const {},
+    this.includesVat = false,
+    this.includesService = false,
+  });
+
+  final String id;
+  final String description;
+  final String category;
+  final int totalMinor;
+  final DateTime occurredAt;
+  final String createdBy;
+  final String paidByUid;
+  final ExpenseSplitMode splitMode;
+  final Map<String, int> participantSharesMinor;
+  final Set<String> settledParticipantIds;
+  final bool includesVat;
+  final bool includesService;
+
+  int get pendingMinor => participantSharesMinor.entries
+      .where(
+        (entry) =>
+            entry.key != paidByUid &&
+            !settledParticipantIds.contains(entry.key),
+      )
+      .fold(0, (sum, entry) => sum + entry.value);
+}
+
+class SharedExpenseDraft {
+  const SharedExpenseDraft({
+    required this.description,
+    required this.category,
+    required this.totalMinor,
+    required this.occurredAt,
+    required this.paidByUid,
+    required this.splitMode,
+    required this.participantSharesMinor,
+    this.settledParticipantIds = const {},
+    this.includesVat = false,
+    this.includesService = false,
+  });
+
+  final String description;
+  final String category;
+  final int totalMinor;
+  final DateTime occurredAt;
+  final String paidByUid;
+  final ExpenseSplitMode splitMode;
+  final Map<String, int> participantSharesMinor;
+  final Set<String> settledParticipantIds;
+  final bool includesVat;
+  final bool includesService;
+}
+
+abstract final class SharedExpenseCategories {
+  static const values = <String>[
+    'Comida y restaurantes',
+    'Supermercado',
+    'Servicios básicos',
+    'Arriendo',
+    'Transporte',
+    'Viaje',
+    'Salud',
+    'Entretenimiento',
+    'Otro',
+  ];
+}
+
 class FinanceTransaction {
   const FinanceTransaction({
     required this.id,

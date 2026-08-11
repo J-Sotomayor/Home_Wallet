@@ -12,6 +12,7 @@ import {
 } from "firebase-admin/firestore";
 import {getStorage} from "firebase-admin/storage";
 import {setGlobalOptions} from "firebase-functions/v2";
+import {error as logError} from "firebase-functions/logger";
 import {
   CallableRequest,
   HttpsError,
@@ -22,8 +23,10 @@ import {onDocumentCreated} from "firebase-functions/v2/firestore";
 
 initializeApp();
 
+const primaryRegion = "southamerica-west1";
+
 setGlobalOptions({
-  region: "southamerica-west1",
+  region: primaryRegion,
   maxInstances: 5,
   memory: "256MiB",
   timeoutSeconds: 30,
@@ -383,7 +386,7 @@ export const acceptInvitation = onCall(async (request) => {
     "Nuevo integrante en el hogar",
     "Una invitación fue aceptada. Revisa la lista de integrantes.",
     "invitation-accepted",
-  ).catch((error) => console.error("Invitation notification failed", error));
+  ).catch((error) => logError("Invitation notification failed", {error}));
 
   return {householdId: acceptedHouseholdId};
 });
@@ -440,7 +443,7 @@ export const updateMemberRole = onCall(async (request) => {
     "Tu rol cambió",
     "Revisa tus permisos actualizados en HomeWallet.",
     {householdId, type: "role-changed"},
-  ).catch((error) => console.error("Role notification failed", error));
+  ).catch((error) => logError("Role notification failed", {error}));
   return {ok: true};
 });
 
@@ -502,7 +505,7 @@ export const removeMember = onCall(async (request) => {
     "Acceso al hogar actualizado",
     "Ya no formas parte de uno de tus hogares en HomeWallet.",
     {householdId, type: "member-removed"},
-  ).catch((error) => console.error("Removal notification failed", error));
+  ).catch((error) => logError("Removal notification failed", {error}));
   return {ok: true};
 });
 
@@ -610,7 +613,7 @@ export const cancelAccountDeletion = onCall(async (request) => {
 
 export const processAccountDeletions = onSchedule({
   schedule: "every 60 minutes",
-  region: "us-central1",
+  region: primaryRegion,
   timeZone: "America/Guayaquil",
 }, async () => {
   const due = await db
@@ -624,7 +627,7 @@ export const processAccountDeletions = onSchedule({
       await request.ref.update({status: "processing"});
       await deleteAccountData(request.id);
     } catch (error) {
-      console.error(`Account deletion failed for ${request.id}`, error);
+      logError("Account deletion failed", {error});
       await request.ref.set({
         status: "pending",
         lastErrorAt: FieldValue.serverTimestamp(),
@@ -635,7 +638,7 @@ export const processAccountDeletions = onSchedule({
 
 export const notifyDueRecurring = onSchedule({
   schedule: "every 60 minutes",
-  region: "us-central1",
+  region: primaryRegion,
   timeZone: "America/Guayaquil",
 }, async () => {
   const due = await db
@@ -670,10 +673,39 @@ export const notifyDueRecurring = onSchedule({
       );
     } catch (error) {
       await stateReference.delete().catch(() => undefined);
-      console.error("Recurring notification failed", error);
+      logError("Recurring notification failed", {error});
     }
   }
 });
+
+export const deleteExpiredTransactions = onSchedule(
+  {
+    schedule: "every day 03:15",
+    timeZone: "America/Guayaquil",
+    timeoutSeconds: 300,
+    memory: "256MiB",
+  },
+  async () => {
+    const cutoff = Timestamp.fromMillis(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    let removed = 0;
+    while (true) {
+      const snapshot = await db
+        .collectionGroup("transactions")
+        .where("occurredAt", "<", cutoff)
+        .limit(400)
+        .get();
+      if (snapshot.empty) break;
+      const batch = db.batch();
+      snapshot.docs.forEach((document) => batch.delete(document.ref));
+      await batch.commit();
+      removed += snapshot.size;
+      if (snapshot.size < 400) break;
+    }
+    if (removed > 0) {
+      console.info(`Deleted ${removed} transactions older than 365 days.`);
+    }
+  },
+);
 
 function addBusinessDays(value: Date, days: number): Date {
   const result = new Date(value);

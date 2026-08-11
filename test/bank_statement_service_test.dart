@@ -35,6 +35,27 @@ void main() {
     expect(result.totalsVerified, isTrue);
   });
 
+  test('reconoce y concilia el PDF de cuenta corriente Banco Guayaquil', () {
+    final result = statements.parsePdfPages('EECC_BG_202604.pdf', const [
+      'BANCO GUAYAQUIL S.A.\n'
+          'FECHA DE CORTE: 2026/MAR/17 - 2026/ABR/20\n'
+          'FECHA OFICINA NUMERO CANAL TIPO DESCRIPCION VALOR SALDO\n'
+          '23/MAR MAT 485537 BVI N/C TRANSF.INTRABANCARIAS 100.00 152.09\n'
+          '30/MAR MAT 587676 BVI N/D RECAUD. EEE QUITO 14.13 132.15\n'
+          '20/ABR MAT 215856 VEN N/C PAGO DIRECTO PICHINCHA 300.00 347.67\n'
+          'RESUMEN DE MOVIMIENTOS\n'
+          '3 NOTAS DE CREDITO 400.00\n'
+          '1 NOTAS DE DEBITO 14.13\n',
+    ]);
+
+    expect(result.bankName, 'Banco Guayaquil');
+    expect(result.items, hasLength(3));
+    expect(result.totalFor(TransactionType.income), 40000);
+    expect(result.totalFor(TransactionType.expense), 1413);
+    expect(result.items[1].category, 'Luz');
+    expect(result.totalsVerified, isTrue);
+  });
+
   test('acepta el orden de texto que entrega PDFBox en Android', () {
     final result = statements.parsePdfPages('estado.pdf', const [
       'BANCO PICHINCHA C.A.\n'
@@ -115,6 +136,37 @@ void main() {
 
     expect(utf8.decode(bytes.take(5).toList()), '%PDF-');
     expect(bytes.length, greaterThan(3000));
+  });
+
+  test('separa los movimientos propios de los importados al exportar', () {
+    final values = [
+      ..._transactions(),
+      FinanceTransaction(
+        id: 'bank-1',
+        description: 'Compra importada',
+        category: 'Compras',
+        amountMinor: 1999,
+        occurredAt: DateTime(2026, 7, 4),
+        type: TransactionType.expense,
+        createdBy: 'user',
+        shared: false,
+        origin: TransactionOrigin.imported,
+        sourceName: 'Banco Pichincha · PDF',
+      ),
+    ];
+
+    expect(
+      transactionsForExport(values, TransactionExportScope.homeWallet),
+      hasLength(3),
+    );
+    expect(
+      transactionsForExport(values, TransactionExportScope.imported).single.id,
+      'bank-1',
+    );
+    expect(
+      transactionsForExport(values, TransactionExportScope.all),
+      hasLength(4),
+    );
   });
 }
 

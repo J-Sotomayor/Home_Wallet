@@ -19,6 +19,8 @@ class AuthUser {
     this.phoneNumber = '',
     this.photoUrl,
     this.deletionScheduledFor,
+    this.needsOnboarding = false,
+    this.preferredCategories = const <String>[],
   });
 
   final String uid;
@@ -28,6 +30,8 @@ class AuthUser {
   final String phoneNumber;
   final String? photoUrl;
   final DateTime? deletionScheduledFor;
+  final bool needsOnboarding;
+  final List<String> preferredCategories;
 }
 
 abstract interface class AuthRepository {
@@ -54,6 +58,8 @@ abstract interface class AuthRepository {
     required String newPassword,
   });
   Future<void> acceptTerms();
+  Future<void> completeOnboarding(List<String> preferredCategories);
+  Future<void> updatePreferredCategories(List<String> preferredCategories);
   Future<DateTime> requestAccountDeletion();
   Future<void> cancelAccountDeletion();
   Future<void> signOut();
@@ -216,6 +222,11 @@ class FirebaseAuthRepository implements AuthRepository {
       final user = credential.user;
       if (user == null) throw StateError('Firebase no devolvió el usuario.');
       await user.updateDisplayName(displayName.trim());
+      // El correo es la primera operación posterior al alta. Si Firestore
+      // rechaza temporalmente la creación del perfil, el usuario igual debe
+      // recibir el enlace y poder completar la verificación.
+      await _auth.setLanguageCode('es');
+      await user.sendEmailVerification();
       await _firestore.collection('users').doc(user.uid).set({
         'displayName': displayName.trim(),
         'phoneNumber': '',
@@ -226,9 +237,9 @@ class FirebaseAuthRepository implements AuthRepository {
         'updatedAt': FieldValue.serverTimestamp(),
         'termsVersion': '2026-08-02',
         'termsAcceptedAt': FieldValue.serverTimestamp(),
+        'onboardingCompleted': false,
+        'preferredCategories': <String>[],
       }, SetOptions(merge: true));
-      await _auth.setLanguageCode('es');
-      await user.sendEmailVerification();
       await user.reload();
     } catch (error) {
       throw mapFirebaseError(error);
@@ -360,6 +371,57 @@ class FirebaseAuthRepository implements AuthRepository {
   }
 
   @override
+  Future<void> completeOnboarding(List<String> preferredCategories) async {
+    await _savePreferredCategories(
+      preferredCategories,
+      onboardingCompleted: true,
+    );
+  }
+
+  @override
+  Future<void> updatePreferredCategories(
+    List<String> preferredCategories,
+  ) async {
+    await _savePreferredCategories(preferredCategories);
+  }
+
+  Future<void> _savePreferredCategories(
+    List<String> preferredCategories, {
+    bool? onboardingCompleted,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw const AppException('Tu sesión terminó. Vuelve a iniciar sesión.');
+    }
+    final clean =
+        preferredCategories
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty && value.length <= 40)
+            .toSet()
+            .toList()
+          ..sort();
+    if (clean.isEmpty) {
+      throw const AppException('Elige al menos una categoría para continuar.');
+    }
+    final values = <String, Object?>{
+      'preferredCategories': clean,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (onboardingCompleted != null) {
+      values['onboardingCompleted'] = onboardingCompleted;
+      values['onboardingCompletedAt'] = FieldValue.serverTimestamp();
+    }
+    try {
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .set(values, SetOptions(merge: true));
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
   Future<DateTime> requestAccountDeletion() async {
     try {
       final result =
@@ -423,6 +485,10 @@ class FirebaseAuthRepository implements AuthRepository {
         'householdIds': <String>[],
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+        'termsVersion': '2026-08-02',
+        'termsAcceptedAt': FieldValue.serverTimestamp(),
+        'onboardingCompleted': false,
+        'preferredCategories': <String>[],
       });
       return;
     }
@@ -443,6 +509,12 @@ class FirebaseAuthRepository implements AuthRepository {
       photoUrl: profile?['photoUrl'] as String? ?? user.photoURL,
       deletionScheduledFor:
           (profile?['deletionScheduledFor'] as Timestamp?)?.toDate(),
+      needsOnboarding: profile?['onboardingCompleted'] == false,
+      preferredCategories:
+          (profile?['preferredCategories'] as List?)
+              ?.whereType<String>()
+              .toList(growable: false) ??
+          const <String>[],
     );
   }
 }

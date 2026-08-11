@@ -65,6 +65,10 @@ class BankStatementService {
   BankStatementImportResult parsePdfPages(String fileName, List<String> pages) {
     final allText = pages.join('\n');
     final normalized = TransactionImportRules.normalize(allText);
+    if (normalized.contains('banco guayaquil') &&
+        normalized.contains('resumen de movimientos')) {
+      return _parseGuayaquilPdf(pages, allText);
+    }
     if (!normalized.contains('banco pichincha') &&
         !normalized.contains('detalle de movimientos')) {
       throw const FormatException(
@@ -113,6 +117,115 @@ class BankStatementService {
       declaredIncomeMinor: declaredIncome,
       declaredExpenseMinor: declaredExpense,
     );
+  }
+
+  BankStatementImportResult _parseGuayaquilPdf(
+    List<String> pages,
+    String allText,
+  ) {
+    final periodLine = allText
+        .split(RegExp(r'\r?\n'))
+        .where(
+          (line) => TransactionImportRules.normalize(
+            line,
+          ).contains('fecha de corte:'),
+        );
+    final dates =
+        periodLine.isEmpty
+            ? const <RegExpMatch>[]
+            : RegExp(
+              r'(\d{4})/([A-Za-zÁÉÍÓÚÑáéíóúñ]{3})/(\d{1,2})',
+              caseSensitive: false,
+            ).allMatches(periodLine.first).toList();
+    if (dates.length < 2) {
+      throw const FormatException(
+        'No se pudo identificar el periodo del estado de cuenta de Banco Guayaquil.',
+      );
+    }
+    final periodEnd = dates.last;
+    final year = int.parse(periodEnd.group(1)!);
+    final month = _monthNumber(periodEnd.group(2)!);
+    final day = int.parse(periodEnd.group(3)!);
+    if (month == null) {
+      throw const FormatException('El mes del estado de cuenta no es válido.');
+    }
+    final statementEnd = DateTime(year, month, day);
+    final rowPattern = RegExp(
+      r'^(\d{1,2}/[A-Za-zÁÉÍÓÚÑáéíóúñ]{3})\s+\S+\s+\d+\s+\S+\s+(N/[CD])\s+(.+?)\s+(\d[\d.,]*[.,]\d{2})\s+(\d[\d.,]*[.,]\d{2})(?:\s+\d[\d.,]*[.,]\d{2})?\s*$',
+      caseSensitive: false,
+    );
+    final items = <ImportedTransaction>[];
+    for (final line in pages.expand((page) => page.split(RegExp(r'\r?\n')))) {
+      final match = rowPattern.firstMatch(line.trim());
+      if (match == null) continue;
+      final occurredAt = _shortDate(match.group(1)!, statementEnd);
+      final amount = TransactionImportRules.parseSignedMinor(match.group(4)!);
+      final description = TransactionImportRules.cleanDescription(
+        match.group(3)!,
+      );
+      if (occurredAt == null ||
+          amount == null ||
+          amount == 0 ||
+          description.isEmpty) {
+        continue;
+      }
+      final type =
+          match.group(2)!.toUpperCase() == 'N/C'
+              ? TransactionType.income
+              : TransactionType.expense;
+      items.add(
+        ImportedTransaction(
+          description: description,
+          amountMinor: amount.abs(),
+          occurredAt: occurredAt,
+          type: type,
+          category: TransactionImportRules.categoryFor(type, description),
+        ),
+      );
+    }
+    if (items.isEmpty) {
+      throw const FormatException(
+        'El PDF de Banco Guayaquil no contiene movimientos legibles.',
+      );
+    }
+    final credit = _summaryMoney(allText, 'NOTAS DE CREDITO');
+    final debit = _summaryMoney(allText, 'NOTAS DE DEBITO');
+    return _validatedResult(
+      bankName: 'Banco Guayaquil',
+      format: BankStatementFormat.pdf,
+      items: items,
+      declaredIncomeMinor: credit,
+      declaredExpenseMinor: debit,
+    );
+  }
+
+  static int? _summaryMoney(String text, String label) {
+    final match = RegExp(
+      '${RegExp.escape(label)}\\s+(-?\\d[\\d.,]*[.,]\\d{2})',
+      caseSensitive: false,
+    ).firstMatch(text);
+    return match == null
+        ? null
+        : TransactionImportRules.parseSignedMinor(match.group(1)!)?.abs();
+  }
+
+  static int? _monthNumber(String value) {
+    const months = <String, int>{
+      'ene': 1,
+      'feb': 2,
+      'mar': 3,
+      'abr': 4,
+      'may': 5,
+      'jun': 6,
+      'jul': 7,
+      'ago': 8,
+      'sep': 9,
+      'oct': 10,
+      'nov': 11,
+      'dic': 12,
+    };
+    final normalized = TransactionImportRules.normalize(value);
+    return normalized.length < 3 ? null : months[normalized.substring(0, 3)];
   }
 
   Future<BankStatementImportResult> _pdf(String fileName, String? path) async {

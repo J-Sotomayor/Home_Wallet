@@ -69,7 +69,10 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
   Stream<String?> watchActiveHouseholdId(String uid) => _firestore
       .collection('users')
       .doc(uid)
-      .snapshots()
+      .snapshots(includeMetadataChanges: true)
+      // No avanzamos al tutorial con una escritura local que Firebase todavía
+      // puede rechazar. Solo un valor confirmado por el servidor abre el hogar.
+      .where((snapshot) => !snapshot.metadata.hasPendingWrites)
       .map((snapshot) => snapshot.data()?['activeHouseholdId'] as String?);
 
   @override

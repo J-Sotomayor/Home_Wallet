@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/transactions/domain/finance_balances.dart';
@@ -66,16 +67,20 @@ class NotificationService {
 
   Future<bool> isEnabled(String uid) async {
     final preferences = await SharedPreferences.getInstance();
+    // Ask for notification permission only after the user enables the feature.
+    // Cada instalación debe registrar su propio token. El usuario todavía
+    // puede desactivar la función explícitamente desde Perfil.
     return preferences.getBool(_enabledKey(uid)) ?? true;
   }
 
-  Future<void> setEnabled(String uid, bool enabled) async {
+  Future<bool> setEnabled(String uid, bool enabled) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_enabledKey(uid), enabled);
     if (enabled) {
-      await registerUser(uid);
+      return registerUser(uid);
     } else {
       await unregisterUser(uid);
+      return false;
     }
   }
 
@@ -89,9 +94,11 @@ class NotificationService {
       provisional: false,
     );
     if (permission.authorizationStatus == AuthorizationStatus.denied) {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setBool(_enabledKey(uid), false);
       return false;
     }
-    if (Platform.isAndroid) {
+    if (!kIsWeb && Platform.isAndroid) {
       await _local
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
@@ -99,7 +106,8 @@ class NotificationService {
           ?.requestNotificationsPermission();
     }
     final token = await _messaging.getToken();
-    if (token != null) await _saveToken(uid, token);
+    if (token == null) return false;
+    await _saveToken(uid, token);
     await _tokenSubscription?.cancel();
     _tokenSubscription = _messaging.onTokenRefresh.listen(
       (value) => _saveToken(uid, value),
@@ -224,7 +232,12 @@ class NotificationService {
         .doc(await _tokenId(token))
         .set({
           'token': token,
-          'platform': Platform.isIOS ? 'ios' : 'android',
+          'platform':
+              kIsWeb
+                  ? 'web'
+                  : Platform.isIOS
+                  ? 'ios'
+                  : 'android',
           'updatedAt': FieldValue.serverTimestamp(),
         });
   }

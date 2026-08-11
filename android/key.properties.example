@@ -1,0 +1,6 @@
+# Copia este archivo como android/key.properties y completa valores reales.
+# Conserva el keystore y sus contraseñas fuera del repositorio.
+storeFile=C:/ruta/segura/homewallet-upload.jks
+storePassword=CAMBIAR
+keyAlias=homewallet-upload
+keyPassword=CAMBIAR

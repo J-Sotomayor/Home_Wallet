@@ -3,8 +3,13 @@ import 'finance_models.dart';
 abstract final class TransactionCategories {
   static const expenses = <String>[
     'Alimentación',
+    'Arriendo',
+    'Luz',
+    'Agua',
+    'Internet',
+    'Gas',
     'Vivienda',
-    'Servicios',
+    'Servicios básicos',
     'Transporte',
     'Salud',
     'Educación',
@@ -94,7 +99,24 @@ abstract final class TransactionCategories {
         return 'Alimentación';
       }
       if (text.contains('arriendo') || text.contains('alquiler')) {
-        return 'Vivienda';
+        return 'Arriendo';
+      }
+      if (_containsAny(text, const [
+        'eee quito',
+        'empresa electrica',
+        'energia electrica',
+        'planilla de luz',
+      ])) {
+        return 'Luz';
+      }
+      if (_containsAny(text, const ['agua potable', 'planilla de agua'])) {
+        return 'Agua';
+      }
+      if (_containsAny(text, const ['internet', 'paquetes cnt', 'netlife'])) {
+        return 'Internet';
+      }
+      if (_containsAny(text, const ['gas', 'glp'])) {
+        return 'Gas';
       }
       if (_containsAny(text, const [
         'ropa',

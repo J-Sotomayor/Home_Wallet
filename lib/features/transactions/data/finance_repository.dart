@@ -12,6 +12,7 @@ abstract interface class FinanceRepository {
   Stream<List<FinancePlan>> watchPlans(String householdId);
   Stream<List<FinanceCategory>> watchCategories(String householdId);
   Stream<List<RecurringTransaction>> watchRecurring(String householdId);
+  Stream<List<SharedExpense>> watchSharedExpenses(String householdId);
   Future<void> addTransaction({
     required String householdId,
     required String uid,
@@ -94,9 +95,14 @@ abstract interface class FinanceRepository {
     required String uid,
     required RecurringTransaction recurring,
   });
+  Future<void> addSharedExpense({
+    required String householdId,
+    required String uid,
+    required SharedExpenseDraft expense,
+  });
   Future<void> settleSharedParticipant({
     required String householdId,
-    required FinanceTransaction transaction,
+    required SharedExpense expense,
     required String participantUid,
   });
 }
@@ -121,6 +127,10 @@ class FirebaseFinanceRepository implements FinanceRepository {
       .collection('households')
       .doc(householdId)
       .collection('transactions')
+      .where(
+        'occurredAt',
+        isGreaterThanOrEqualTo: Timestamp.fromDate(_transactionCutoff()),
+      )
       .orderBy('occurredAt', descending: true)
       .limit(1000)
       .snapshots()
@@ -291,6 +301,54 @@ class FirebaseFinanceRepository implements FinanceRepository {
           });
 
   @override
+  Stream<List<SharedExpense>> watchSharedExpenses(String householdId) =>
+      _firestore
+          .collection('households')
+          .doc(householdId)
+          .collection('sharedExpenses')
+          .orderBy('occurredAt', descending: true)
+          .limit(500)
+          .snapshots()
+          .asyncMap((snapshot) async {
+            final key = await _requireKey(householdId);
+            final result = <SharedExpense>[];
+            for (final document in snapshot.docs) {
+              final data = document.data();
+              final clear = await _crypto.decryptJson(
+                payload: _asMap(data['payload']),
+                keyBytes: key,
+                context:
+                    'households/$householdId/sharedExpenses/${document.id}',
+              );
+              result.add(
+                SharedExpense(
+                  id: document.id,
+                  description: clear['description'] as String,
+                  category: clear['category'] as String? ?? 'Otro',
+                  totalMinor: (clear['totalMinor'] as num).toInt(),
+                  occurredAt:
+                      (data['occurredAt'] as Timestamp?)?.toDate() ??
+                      DateTime.now(),
+                  createdBy: data['createdBy'] as String? ?? '',
+                  paidByUid: clear['paidByUid'] as String,
+                  splitMode: ExpenseSplitMode.parse(clear['splitMode']),
+                  participantSharesMinor: _asIntMap(
+                    clear['participantSharesMinor'],
+                  ),
+                  settledParticipantIds:
+                      (clear['settledParticipantIds'] as List?)
+                          ?.map((value) => value.toString())
+                          .toSet() ??
+                      const {},
+                  includesVat: clear['includesVat'] as bool? ?? false,
+                  includesService: clear['includesService'] as bool? ?? false,
+                ),
+              );
+            }
+            return result;
+          });
+
+  @override
   Future<void> addTransaction({
     required String householdId,
     required String uid,
@@ -421,7 +479,8 @@ class FirebaseFinanceRepository implements FinanceRepository {
       shared: shared,
       origin: original.origin,
       sourceName: original.sourceName,
-      sourceVerified: original.sourceVerified,
+      // Any manual correction breaks the exact match with the source file.
+      sourceVerified: false,
       linkedPlanId: linkedPlan?.id,
       linkedPlanName: linkedPlan?.name,
       planDeltaMinor: linkedPlan == null ? 0 : planDelta,
@@ -640,46 +699,72 @@ class FirebaseFinanceRepository implements FinanceRepository {
   }
 
   @override
+  Future<void> addSharedExpense({
+    required String householdId,
+    required String uid,
+    required SharedExpenseDraft expense,
+  }) async {
+    _validateSharedExpense(expense);
+    try {
+      final key = await _requireKey(householdId);
+      final reference =
+          _firestore
+              .collection('households')
+              .doc(householdId)
+              .collection('sharedExpenses')
+              .doc();
+      await reference.set({
+        'schemaVersion': 1,
+        'occurredAt': Timestamp.fromDate(expense.occurredAt),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'createdBy': uid,
+        'payload': await _encryptSharedExpensePayload(
+          householdId: householdId,
+          referenceId: reference.id,
+          expense: expense,
+          key: key,
+        ),
+      });
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
   Future<void> settleSharedParticipant({
     required String householdId,
-    required FinanceTransaction transaction,
+    required SharedExpense expense,
     required String participantUid,
   }) async {
-    if (!transaction.participantSharesMinor.containsKey(participantUid)) {
+    if (!expense.participantSharesMinor.containsKey(participantUid)) {
       throw const AppException('Este integrante no participa en el gasto.');
     }
     try {
       final key = await _requireKey(householdId);
-      final settled = {...transaction.settledParticipantIds, participantUid};
-      final draft = FinanceTransactionDraft(
-        description: transaction.description,
-        category: transaction.category,
-        amountMinor: transaction.amountMinor,
-        occurredAt: transaction.occurredAt,
-        type: transaction.type,
-        shared: transaction.shared,
-        origin: transaction.origin,
-        sourceName: transaction.sourceName,
-        sourceVerified: transaction.sourceVerified,
-        linkedPlanId: transaction.linkedPlanId,
-        linkedPlanName: transaction.linkedPlanName,
-        planDeltaMinor: transaction.planDeltaMinor,
-        fundingSource: transaction.fundingSource,
-        paidByUid: transaction.paidByUid,
-        splitMode: transaction.splitMode,
-        participantSharesMinor: transaction.participantSharesMinor,
+      final settled = {...expense.settledParticipantIds, participantUid};
+      final draft = SharedExpenseDraft(
+        description: expense.description,
+        category: expense.category,
+        totalMinor: expense.totalMinor,
+        occurredAt: expense.occurredAt,
+        paidByUid: expense.paidByUid,
+        splitMode: expense.splitMode,
+        participantSharesMinor: expense.participantSharesMinor,
         settledParticipantIds: settled,
+        includesVat: expense.includesVat,
+        includesService: expense.includesService,
       );
       await _firestore
           .collection('households')
           .doc(householdId)
-          .collection('transactions')
-          .doc(transaction.id)
+          .collection('sharedExpenses')
+          .doc(expense.id)
           .update({
-            'payload': await _encryptTransactionPayload(
+            'payload': await _encryptSharedExpensePayload(
               householdId: householdId,
-              referenceId: transaction.id,
-              transaction: draft,
+              referenceId: expense.id,
+              expense: draft,
               key: key,
             ),
             'updatedAt': FieldValue.serverTimestamp(),
@@ -737,6 +822,19 @@ class FirebaseFinanceRepository implements FinanceRepository {
     if (transaction.amountMinor <= 0 || transaction.amountMinor > 99999999999) {
       throw const AppException('El monto ingresado no es válido.');
     }
+    final occurredDay = DateTime(
+      transaction.occurredAt.year,
+      transaction.occurredAt.month,
+      transaction.occurredAt.day,
+    );
+    final today = DateTime.now();
+    final currentDay = DateTime(today.year, today.month, today.day);
+    if (occurredDay.isBefore(_transactionCutoff()) ||
+        occurredDay.isAfter(currentDay)) {
+      throw const AppException(
+        'HomeWallet conserva únicamente movimientos de los últimos 365 días.',
+      );
+    }
     final cleanCategory = transaction.category.trim();
     if (cleanCategory.isEmpty || cleanCategory.length > 40) {
       throw const AppException('La categoría seleccionada no es válida.');
@@ -762,6 +860,34 @@ class FirebaseFinanceRepository implements FinanceRepository {
           'Selecciona quién pagó y los participantes del gasto.',
         );
       }
+    }
+  }
+
+  static void _validateSharedExpense(SharedExpenseDraft expense) {
+    final description = expense.description.trim();
+    if (description.isEmpty || description.length > 100) {
+      throw const AppException(
+        'La descripción debe tener entre 1 y 100 caracteres.',
+      );
+    }
+    if (expense.totalMinor <= 0 || expense.totalMinor > 99999999999) {
+      throw const AppException('El total de la cuenta no es válido.');
+    }
+    if (expense.participantSharesMinor.length < 2 ||
+        !expense.participantSharesMinor.containsKey(expense.paidByUid)) {
+      throw const AppException(
+        'Elige al menos dos participantes e indica quién pagó.',
+      );
+    }
+    if (expense.participantSharesMinor.values.any((value) => value < 0) ||
+        expense.participantSharesMinor.values.fold<int>(
+              0,
+              (total, value) => total + value,
+            ) !=
+            expense.totalMinor) {
+      throw const AppException(
+        'La división debe sumar exactamente el total de la cuenta.',
+      );
     }
   }
 
@@ -1054,6 +1180,28 @@ class FirebaseFinanceRepository implements FinanceRepository {
     context: 'households/$householdId/recurring/$referenceId',
   );
 
+  Future<Map<String, dynamic>> _encryptSharedExpensePayload({
+    required String householdId,
+    required String referenceId,
+    required SharedExpenseDraft expense,
+    required List<int> key,
+  }) => _crypto.encryptJson(
+    value: {
+      'description': expense.description.trim(),
+      'category': expense.category.trim(),
+      'totalMinor': expense.totalMinor,
+      'paidByUid': expense.paidByUid,
+      'splitMode': expense.splitMode.name,
+      'participantSharesMinor': expense.participantSharesMinor,
+      if (expense.settledParticipantIds.isNotEmpty)
+        'settledParticipantIds': expense.settledParticipantIds.toList(),
+      'includesVat': expense.includesVat,
+      'includesService': expense.includesService,
+    },
+    keyBytes: key,
+    context: 'households/$householdId/sharedExpenses/$referenceId',
+  );
+
   static Map<String, dynamic> _transactionDocument(
     FinanceTransactionDraft transaction,
     String uid,
@@ -1160,4 +1308,10 @@ class FirebaseFinanceRepository implements FinanceRepository {
       participantSharesMinor: _asIntMap(clear['participantSharesMinor']),
     );
   }
+}
+
+DateTime _transactionCutoff() {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  return today.subtract(const Duration(days: 364));
 }

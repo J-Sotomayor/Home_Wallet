@@ -591,12 +591,17 @@ class EmailVerificationScreen extends StatefulWidget {
 class _EmailVerificationScreenState extends State<EmailVerificationScreen>
     with WidgetsBindingObserver {
   Timer? _pollTimer;
+  Timer? _cooldownTimer;
   bool _checking = false;
+  bool _manualChecking = false;
   bool _resending = false;
   bool _completed = false;
-  DateTime? _lastSent;
+  int _resendSeconds = 0;
+  String _statusMessage =
+      'Revisa la bandeja de entrada y también correo no deseado o spam.';
+  bool _statusIsError = false;
 
-  bool get _busy => _checking || _resending || _completed;
+  bool get _resendDisabled => _resending || _completed || _resendSeconds > 0;
 
   @override
   void initState() {
@@ -613,6 +618,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _cooldownTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -675,28 +681,88 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: AppSpacing.md),
+          AnimatedContainer(
+            key: const Key('verification_status'),
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color:
+                  _statusIsError
+                      ? scheme.errorContainer
+                      : scheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  _statusIsError
+                      ? Icons.error_outline
+                      : Icons.info_outline_rounded,
+                  color:
+                      _statusIsError
+                          ? scheme.onErrorContainer
+                          : scheme.onSecondaryContainer,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    _statusMessage,
+                    style: TextStyle(
+                      color:
+                          _statusIsError
+                              ? scheme.onErrorContainer
+                              : scheme.onSecondaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xl),
           FilledButton.icon(
             key: const Key('verification_continue'),
             onPressed:
-                _busy
+                _manualChecking || _completed
                     ? null
-                    : () => _checkVerification(announceWhenPending: true),
+                    : () => _checkVerification(
+                      announceWhenPending: true,
+                      showProgress: true,
+                    ),
             icon:
-                _checking
+                _manualChecking
                     ? const SizedBox.square(
                       dimension: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                     : const Icon(Icons.verified_outlined),
-            label: Text(_checking ? 'Comprobando…' : 'Ya verifiqué mi correo'),
+            label: Text(
+              _manualChecking ? 'Comprobando…' : 'Ya verifiqué mi correo',
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          OutlinedButton.icon(
+            key: const Key('verification_resend'),
+            onPressed: _resendDisabled ? null : _resend,
+            icon:
+                _resending
+                    ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : const Icon(Icons.forward_to_inbox_outlined),
+            label: Text(
+              _resending
+                  ? 'Enviando…'
+                  : _resendSeconds > 0
+                  ? 'Podrás reenviar en $_resendSeconds s'
+                  : 'Reenviar enlace',
+            ),
           ),
           TextButton(
-            onPressed: _busy ? null : _resend,
-            child: const Text('Reenviar enlace'),
-          ),
-          TextButton(
-            onPressed: _busy ? null : widget.repository.signOut,
+            key: const Key('verification_other_account'),
+            onPressed: _completed ? null : widget.repository.signOut,
             child: const Text('Usar otra cuenta'),
           ),
         ],
@@ -704,9 +770,15 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
     );
   }
 
-  Future<void> _checkVerification({bool announceWhenPending = false}) async {
+  Future<void> _checkVerification({
+    bool announceWhenPending = false,
+    bool showProgress = false,
+  }) async {
     if (_checking || _completed || !mounted) return;
-    setState(() => _checking = true);
+    setState(() {
+      _checking = true;
+      if (showProgress) _manualChecking = true;
+    });
     try {
       final verified = await widget.repository.reloadEmailVerification();
       if (verified) {
@@ -714,45 +786,59 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
         _pollTimer?.cancel();
         await widget.onVerified();
       } else if (announceWhenPending && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Aún no aparece verificado. Si acabas de abrir el enlace, espera unos segundos.',
-            ),
-          ),
-        );
+        setState(() {
+          _statusIsError = false;
+          _statusMessage =
+              'Aún no aparece verificado. Si acabas de abrir el enlace, espera unos segundos y vuelve a intentarlo.';
+        });
       }
     } on AppException catch (error) {
-      if (announceWhenPending) _showError(error.message);
+      if (announceWhenPending) _setStatus(error.message, isError: true);
     } finally {
-      if (mounted) setState(() => _checking = false);
+      if (mounted) {
+        setState(() {
+          _checking = false;
+          if (showProgress) _manualChecking = false;
+        });
+      }
     }
   }
 
   Future<void> _resend() async {
-    final lastSent = _lastSent;
-    if (lastSent != null &&
-        DateTime.now().difference(lastSent).inSeconds < 60) {
-      _showError('Espera un minuto antes de solicitar otro enlace.');
-      return;
-    }
     setState(() => _resending = true);
     try {
       await widget.repository.sendEmailVerification();
-      _lastSent = DateTime.now();
-      _showError('Enlace de verificación enviado.');
+      if (!mounted) return;
+      _setStatus(
+        'Nuevo enlace enviado a ${widget.user.email}. Revisa también spam o correo no deseado.',
+      );
+      _startResendCooldown();
     } on AppException catch (error) {
-      _showError(error.message);
+      _setStatus(error.message, isError: true);
     } finally {
       if (mounted) setState(() => _resending = false);
     }
   }
 
-  void _showError(String message) {
+  void _startResendCooldown() {
+    _cooldownTimer?.cancel();
+    setState(() => _resendSeconds = 60);
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _resendSeconds <= 1) {
+        timer.cancel();
+        if (mounted) setState(() => _resendSeconds = 0);
+        return;
+      }
+      setState(() => _resendSeconds--);
+    });
+  }
+
+  void _setStatus(String message, {bool isError = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    setState(() {
+      _statusMessage = message;
+      _statusIsError = isError;
+    });
   }
 }
 

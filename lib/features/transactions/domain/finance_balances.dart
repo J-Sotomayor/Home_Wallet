@@ -22,6 +22,9 @@ class FinanceBalances {
     var goalContributions = 0;
 
     for (final transaction in transactions) {
+      // Legacy shared transactions are reimbursement calculations, not cash
+      // flow. New bill splits live in their own collection.
+      if (transaction.shared) continue;
       switch (transaction.type) {
         case TransactionType.income:
           income += transaction.amountMinor;
@@ -86,10 +89,82 @@ int automaticPlanProgress(
   return transactions
       .where(
         (item) =>
+            !item.shared &&
             item.type == TransactionType.expense &&
             item.occurredAt.year == now.year &&
             item.occurredAt.month == now.month &&
             (plan.category == null || item.category == plan.category),
       )
       .fold<int>(0, (sum, item) => sum + item.amountMinor);
+}
+
+class FinancePlanProgress {
+  const FinancePlanProgress({
+    required this.currentMinor,
+    required this.targetMinor,
+    required this.remainingMinor,
+    required this.ratio,
+    required this.activityCount,
+    required this.nextMilestone,
+    this.latestActivityAt,
+    this.recommendedMonthlyMinor,
+  });
+
+  final int currentMinor;
+  final int targetMinor;
+  final int remainingMinor;
+  final double ratio;
+  final int activityCount;
+  final DateTime? latestActivityAt;
+  final double nextMilestone;
+  final int? recommendedMonthlyMinor;
+
+  bool get complete => ratio >= 1;
+}
+
+FinancePlanProgress calculatePlanProgress(
+  FinancePlan plan,
+  List<FinanceTransaction> transactions,
+  DateTime now,
+) {
+  final relevant =
+      transactions.where((item) {
+          if (item.shared) return false;
+          if (plan.kind == FinancePlanKind.goal) {
+            return item.linkedPlanId == plan.id && item.planDeltaMinor != 0;
+          }
+          return item.type == TransactionType.expense &&
+              item.occurredAt.year == now.year &&
+              item.occurredAt.month == now.month &&
+              (plan.category == null || item.category == plan.category);
+        }).toList()
+        ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+  final current = automaticPlanProgress(plan, transactions, now);
+  final remaining = (plan.targetMinor - current).clamp(0, 99999999999);
+  final ratio = plan.targetMinor <= 0 ? 0.0 : current / plan.targetMinor;
+  final nextMilestone = switch (ratio) {
+    < .25 => .25,
+    < .50 => .50,
+    < .75 => .75,
+    < 1 => 1.0,
+    _ => 1.0,
+  };
+  int? monthly;
+  if (plan.kind == FinancePlanKind.goal &&
+      plan.deadline != null &&
+      remaining > 0) {
+    final days = plan.deadline!.difference(now).inDays.clamp(1, 36500);
+    final months = (days / 30).ceil().clamp(1, 1200);
+    monthly = (remaining / months).ceil();
+  }
+  return FinancePlanProgress(
+    currentMinor: current,
+    targetMinor: plan.targetMinor,
+    remainingMinor: remaining,
+    ratio: ratio,
+    activityCount: relevant.length,
+    latestActivityAt: relevant.isEmpty ? null : relevant.first.occurredAt,
+    nextMilestone: nextMilestone,
+    recommendedMonthlyMinor: monthly,
+  );
 }

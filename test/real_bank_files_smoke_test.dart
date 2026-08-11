@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:homewallet/features/transactions/domain/finance_models.dart';
 import 'package:homewallet/features/transactions/services/bank_statement_service.dart';
 
 void main() {
@@ -25,12 +26,6 @@ void main() {
 
         expect(result.items, isNotEmpty);
         expect(result.bankName, anyOf('Banco Pichincha', 'Banco Guayaquil'));
-        // No imprime descripciones, cuentas ni montos de los archivos reales.
-        // ignore: avoid_print
-        print(
-          '${result.bankName}: ${result.items.length} movimientos; '
-          'totales verificados=${result.totalsVerified}',
-        );
       },
       skip:
           path == null
@@ -59,14 +54,14 @@ void main() {
               .toList();
       final result = service.parsePdfPages(_fileName(pdfPath), pages);
 
-      expect(result.bankName, 'Banco Pichincha');
+      expect(result.bankName, anyOf('Banco Pichincha', 'Banco Guayaquil'));
       expect(result.items, isNotEmpty);
       expect(result.totalsVerified, isTrue);
-      // ignore: avoid_print
-      print(
-        '${result.bankName}: ${result.items.length} movimientos; '
-        'totales verificados=${result.totalsVerified}',
-      );
+      if (result.bankName == 'Banco Guayaquil') {
+        expect(result.items, hasLength(15));
+        expect(result.totalFor(TransactionType.income), 86300);
+        expect(result.totalFor(TransactionType.expense), 86742);
+      }
     },
     skip:
         pdfPath == null || pdftotext == null

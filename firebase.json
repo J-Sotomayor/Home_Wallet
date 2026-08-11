@@ -1,25 +1,4 @@
 {
-  "flutter": {
-    "platforms": {
-      "android": {
-        "default": {
-          "projectId": "homewallet-prod",
-          "appId": "1:472403004735:android:31279f29e54d70cc54178a",
-          "fileOutput": "android/app/google-services.json"
-        }
-      },
-      "dart": {
-        "lib/firebase_options.dart": {
-          "projectId": "homewallet-prod",
-          "configurations": {
-            "android": "1:472403004735:android:31279f29e54d70cc54178a",
-            "ios": "1:472403004735:ios:647308d74bcac89f54178a",
-            "web": "1:472403004735:web:d4bf889c13e1225354178a"
-          }
-        }
-      }
-    }
-  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
@@ -50,4 +29,3 @@
     "singleProjectMode": true
   }
 }
-

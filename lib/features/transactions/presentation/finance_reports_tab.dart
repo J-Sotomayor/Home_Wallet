@@ -1,12 +1,17 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/errors/app_exception.dart';
 import '../data/finance_repository.dart';
 import '../../households/domain/household_models.dart';
 import '../domain/finance_balances.dart';
 import '../domain/finance_models.dart';
+import '../services/transaction_csv_service.dart';
+import '../services/transaction_export_service.dart';
 
 enum _ReportPeriod { month, custom, all }
 
@@ -27,10 +32,13 @@ class FinanceReportsTab extends StatefulWidget {
 }
 
 class _FinanceReportsTabState extends State<FinanceReportsTab> {
+  static const _csv = TransactionCsvService();
+  static const _exports = TransactionExportService();
   _ReportPeriod _period = _ReportPeriod.month;
   DateTimeRange? _dateRange;
   String? _category;
   String? _memberUid;
+  bool _exporting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +68,10 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final now = DateTime.now();
-                  final all = transactionSnapshot.data!;
+                  final all =
+                      transactionSnapshot.data!
+                          .where((transaction) => !transaction.shared)
+                          .toList();
                   final categories =
                       all.map((item) => item.category).toSet().toList()..sort();
                   final transactions =
@@ -110,6 +121,8 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                         (value) => setState(() => _category = value),
                     onMemberChanged:
                         (value) => setState(() => _memberUid = value),
+                    exporting: _exporting,
+                    onExport: () => _chooseExport(transactions),
                   );
                 },
               );
@@ -139,6 +152,64 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
       });
     }
   }
+
+  Future<void> _chooseExport(
+    List<FinanceTransaction> filteredTransactions,
+  ) async {
+    if (filteredTransactions.isEmpty || _exporting) return;
+    final choice = await showModalBottomSheet<_ExportChoice>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _ExportSheet(transactions: filteredTransactions),
+    );
+    if (choice == null || !mounted) return;
+
+    final selected = transactionsForExport(filteredTransactions, choice.scope);
+    if (selected.isEmpty) {
+      _showMessage(
+        'No hay movimientos de ese origen con los filtros actuales.',
+      );
+      return;
+    }
+
+    setState(() => _exporting = true);
+    try {
+      final Uint8List bytes = switch (choice.format) {
+        _ExportFormat.excel => _exports.exportExcel(selected),
+        _ExportFormat.pdf => await _exports.exportPdf(selected),
+        _ExportFormat.csv => _csv.exportBytes(selected),
+      };
+      final extension = choice.format.extension;
+      final date = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final path = await FilePicker.saveFile(
+        dialogTitle: 'Guardar reporte de HomeWallet',
+        fileName: 'homewallet_${choice.scope.fileLabel}_$date.$extension',
+        type: FileType.custom,
+        allowedExtensions: [extension],
+        bytes: bytes,
+      );
+      if (!mounted) return;
+      _showMessage(
+        path == null
+            ? 'Reporte generado. La ubicación depende de tu dispositivo.'
+            : 'Reporte ${choice.format.label} guardado correctamente.',
+      );
+    } on AppException catch (error) {
+      _showMessage(error.message);
+    } catch (_) {
+      _showMessage('No se pudo generar el reporte. Inténtalo nuevamente.');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 }
 
 class _ReportBody extends StatelessWidget {
@@ -154,6 +225,8 @@ class _ReportBody extends StatelessWidget {
     required this.onPeriodChanged,
     required this.onCategoryChanged,
     required this.onMemberChanged,
+    required this.exporting,
+    required this.onExport,
   });
 
   final List<FinanceTransaction> transactions;
@@ -167,6 +240,8 @@ class _ReportBody extends StatelessWidget {
   final Future<void> Function(_ReportPeriod) onPeriodChanged;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<String?> onMemberChanged;
+  final bool exporting;
+  final VoidCallback onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -251,51 +326,111 @@ class _ReportBody extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String?>(
-                value: category,
-                decoration: const InputDecoration(labelText: 'Categoría'),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('Todas'),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final categoryField = DropdownButtonFormField<String?>(
+              value: category,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Categoría'),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Todas'),
+                ),
+                ...categories.map(
+                  (value) => DropdownMenuItem<String?>(
+                    value: value,
+                    child: Text(value, overflow: TextOverflow.ellipsis),
                   ),
-                  ...categories.map(
-                    (value) => DropdownMenuItem<String?>(
-                      value: value,
-                      child: Text(value, overflow: TextOverflow.ellipsis),
+                ),
+              ],
+              onChanged: onCategoryChanged,
+            );
+            final memberField = DropdownButtonFormField<String?>(
+              value: memberUid,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Integrante'),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Todos'),
+                ),
+                ...members.map(
+                  (member) => DropdownMenuItem<String?>(
+                    value: member.uid,
+                    child: Text(
+                      member.displayName,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                ),
+              ],
+              onChanged: onMemberChanged,
+            );
+            if (constraints.maxWidth < 420) {
+              return Column(
+                children: [
+                  categoryField,
+                  const SizedBox(height: 12),
+                  memberField,
                 ],
-                onChanged: onCategoryChanged,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: DropdownButtonFormField<String?>(
-                value: memberUid,
-                decoration: const InputDecoration(labelText: 'Integrante'),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('Todos'),
-                  ),
-                  ...members.map(
-                    (member) => DropdownMenuItem<String?>(
-                      value: member.uid,
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: categoryField),
+                const SizedBox(width: 12),
+                Expanded(child: memberField),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.download_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
                       child: Text(
-                        member.displayName,
-                        overflow: TextOverflow.ellipsis,
+                        'Descargar este reporte',
+                        style: TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
+                    Text('${transactions.length} mov.'),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Usará el periodo, la categoría y el integrante seleccionados arriba.',
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  key: const Key('open_report_export'),
+                  onPressed:
+                      transactions.isEmpty || exporting ? null : onExport,
+                  icon:
+                      exporting
+                          ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Icon(Icons.ios_share_outlined),
+                  label: Text(
+                    exporting ? 'Creando reporte…' : 'Elegir datos y formato',
                   ),
-                ],
-                onChanged: onMemberChanged,
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         const SizedBox(height: 18),
         if (transactions.isEmpty)
@@ -586,6 +721,259 @@ class _ReportBody extends StatelessWidget {
       );
     }
     return result;
+  }
+}
+
+enum _ExportFormat {
+  excel,
+  pdf,
+  csv;
+
+  String get label => switch (this) {
+    _ExportFormat.excel => 'Excel',
+    _ExportFormat.pdf => 'PDF',
+    _ExportFormat.csv => 'CSV',
+  };
+
+  String get extension => switch (this) {
+    _ExportFormat.excel => 'xlsx',
+    _ExportFormat.pdf => 'pdf',
+    _ExportFormat.csv => 'csv',
+  };
+}
+
+extension on TransactionExportScope {
+  String get title => switch (this) {
+    TransactionExportScope.homeWallet => 'Registrados en HomeWallet',
+    TransactionExportScope.imported => 'Solo importados',
+    TransactionExportScope.all => 'Todos los movimientos',
+  };
+
+  String get description => switch (this) {
+    TransactionExportScope.homeWallet =>
+      'Incluye los creados manualmente y los programados. Excluye archivos bancarios.',
+    TransactionExportScope.imported =>
+      'Incluye únicamente los movimientos traídos desde estados de cuenta.',
+    TransactionExportScope.all =>
+      'Combina los registrados en la app y los importados desde bancos.',
+  };
+
+  String get fileLabel => switch (this) {
+    TransactionExportScope.homeWallet => 'registrados',
+    TransactionExportScope.imported => 'importados',
+    TransactionExportScope.all => 'todos',
+  };
+
+  IconData get icon => switch (this) {
+    TransactionExportScope.homeWallet => Icons.edit_note_outlined,
+    TransactionExportScope.imported => Icons.account_balance_outlined,
+    TransactionExportScope.all => Icons.all_inclusive,
+  };
+}
+
+class _ExportChoice {
+  const _ExportChoice({required this.scope, required this.format});
+
+  final TransactionExportScope scope;
+  final _ExportFormat format;
+}
+
+class _ExportSheet extends StatefulWidget {
+  const _ExportSheet({required this.transactions});
+
+  final List<FinanceTransaction> transactions;
+
+  @override
+  State<_ExportSheet> createState() => _ExportSheetState();
+}
+
+class _ExportSheetState extends State<_ExportSheet> {
+  TransactionExportScope _scope = TransactionExportScope.homeWallet;
+
+  int _count(TransactionExportScope scope) =>
+      transactionsForExport(widget.transactions, scope).length;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedCount = _count(_scope);
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Exportar reporte',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'El periodo y los filtros ya están aplicados. Ahora elige el origen de los datos.',
+            ),
+            const SizedBox(height: 18),
+            Text(
+              '1. ¿Qué quieres incluir?',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            ...TransactionExportScope.values.map(
+              (scope) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _ExportScopeTile(
+                  key: ValueKey('export_scope_${scope.name}'),
+                  scope: scope,
+                  count: _count(scope),
+                  selected: _scope == scope,
+                  onTap: () => setState(() => _scope = scope),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '2. ¿En qué formato?',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 5),
+            Text(
+              selectedCount == 0
+                  ? 'No hay movimientos para esta opción con los filtros actuales.'
+                  : selectedCount == 1
+                  ? 'Se exportará 1 movimiento.'
+                  : 'Se exportarán $selectedCount movimientos.',
+              style: TextStyle(
+                color:
+                    selectedCount == 0
+                        ? Theme.of(context).colorScheme.error
+                        : null,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const Key('export_excel'),
+              onPressed:
+                  selectedCount == 0
+                      ? null
+                      : () => Navigator.pop(
+                        context,
+                        _ExportChoice(
+                          scope: _scope,
+                          format: _ExportFormat.excel,
+                        ),
+                      ),
+              icon: const Icon(Icons.table_view_outlined),
+              label: const Text('Guardar como Excel'),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('export_pdf'),
+                    onPressed:
+                        selectedCount == 0
+                            ? null
+                            : () => Navigator.pop(
+                              context,
+                              _ExportChoice(
+                                scope: _scope,
+                                format: _ExportFormat.pdf,
+                              ),
+                            ),
+                    icon: const Icon(Icons.picture_as_pdf_outlined),
+                    label: const Text('PDF'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('export_csv'),
+                    onPressed:
+                        selectedCount == 0
+                            ? null
+                            : () => Navigator.pop(
+                              context,
+                              _ExportChoice(
+                                scope: _scope,
+                                format: _ExportFormat.csv,
+                              ),
+                            ),
+                    icon: const Icon(Icons.data_object_outlined),
+                    label: const Text('CSV'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExportScopeTile extends StatelessWidget {
+  const _ExportScopeTile({
+    super.key,
+    required this.scope,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final TransactionExportScope scope;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(scope.icon, color: selected ? scheme.primary : null),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      scope.title,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      scope.description,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                children: [
+                  Text(
+                    '$count',
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  if (selected)
+                    Icon(Icons.check_circle, size: 18, color: scheme.primary),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

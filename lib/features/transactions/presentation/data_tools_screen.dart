@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -9,8 +7,6 @@ import '../../../core/errors/app_exception.dart';
 import '../../auth/data/auth_repository.dart';
 import '../domain/finance_models.dart';
 import '../services/bank_statement_service.dart';
-import '../services/transaction_csv_service.dart';
-import '../services/transaction_export_service.dart';
 
 class DataToolsScreen extends StatefulWidget {
   const DataToolsScreen({
@@ -31,9 +27,7 @@ class DataToolsScreen extends StatefulWidget {
 }
 
 class _DataToolsScreenState extends State<DataToolsScreen> {
-  static const _csv = TransactionCsvService();
   static const _statements = BankStatementService();
-  static const _exports = TransactionExportService();
   bool _busy = false;
   double? _progress;
   String? _status;
@@ -41,18 +35,18 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Importar y exportar')),
+      appBar: AppBar(title: const Text('Importar movimientos')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 36),
           children: [
             Text(
-              'Tus datos, bajo tu control',
+              'Trae tus movimientos del banco',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
             const Text(
-              'Importa estados de cuenta de Pichincha, Guayaquil y archivos bancarios compatibles. También puedes descargar un reporte profesional.',
+              'Revisa el archivo antes de guardarlo. HomeWallet identificará estos movimientos como importados para que puedas separarlos en tus reportes.',
             ),
             const SizedBox(height: 20),
             Card(
@@ -100,47 +94,6 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
                           ),
                         ),
                       ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Icon(Icons.download_outlined, size: 42),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Exportar movimientos',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Genera un estado de movimientos con periodo, resumen de ingresos, gastos, ahorros, categorías y detalle completo.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton.tonalIcon(
-                      onPressed: _busy ? null : _exportExcel,
-                      icon: const Icon(Icons.table_view_outlined),
-                      label: const Text('Guardar reporte Excel'),
-                    ),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _exportPdf,
-                      icon: const Icon(Icons.picture_as_pdf_outlined),
-                      label: const Text('Guardar estado en PDF'),
-                    ),
-                    const SizedBox(height: 4),
-                    TextButton.icon(
-                      onPressed: _busy ? null : _exportCsv,
-                      icon: const Icon(Icons.data_object_outlined, size: 19),
-                      label: const Text('Guardar también como CSV'),
                     ),
                   ],
                 ),
@@ -204,6 +157,21 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
         bytes: bytes,
         path: file.path,
       );
+      final today = DateTime.now();
+      final cutoff = DateTime(
+        today.year,
+        today.month,
+        today.day,
+      ).subtract(const Duration(days: 364));
+      final expired =
+          imported.items
+              .where((item) => item.occurredAt.isBefore(cutoff))
+              .length;
+      if (expired > 0) {
+        throw FormatException(
+          '$expired movimientos están fuera del historial permitido de 365 días. Importa un estado de cuenta más reciente.',
+        );
+      }
       if (imported.items.length > 500) {
         throw const FormatException(
           'El archivo supera 500 movimientos. Divídelo en varios periodos.',
@@ -266,74 +234,6 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
           _progress = null;
         });
       }
-    }
-  }
-
-  Future<void> _exportExcel() async {
-    await _export(
-      extension: 'xlsx',
-      preparingMessage: 'Preparando el reporte Excel…',
-      createBytes: (transactions) async => _exports.exportExcel(transactions),
-    );
-  }
-
-  Future<void> _exportPdf() async {
-    await _export(
-      extension: 'pdf',
-      preparingMessage: 'Diseñando el estado de movimientos PDF…',
-      createBytes: _exports.exportPdf,
-    );
-  }
-
-  Future<void> _exportCsv() async {
-    await _export(
-      extension: 'csv',
-      preparingMessage: 'Preparando el archivo CSV…',
-      createBytes: (transactions) async => _csv.exportBytes(transactions),
-    );
-  }
-
-  Future<void> _export({
-    required String extension,
-    required String preparingMessage,
-    required Future<Uint8List> Function(List<FinanceTransaction>) createBytes,
-  }) async {
-    setState(() {
-      _busy = true;
-      _progress = null;
-      _status = preparingMessage;
-    });
-    try {
-      final transactions =
-          await widget.services.finance
-              .watchTransactions(widget.householdId)
-              .first;
-      if (transactions.isEmpty) {
-        throw const AppException('Todavía no hay movimientos para exportar.');
-      }
-      final bytes = await createBytes(transactions);
-      final date = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final path = await FilePicker.saveFile(
-        dialogTitle: 'Guardar reporte de HomeWallet',
-        fileName: 'homewallet_estado_$date.$extension',
-        type: FileType.custom,
-        allowedExtensions: [extension],
-        bytes: bytes,
-      );
-      if (mounted) {
-        setState(() {
-          _status =
-              path == null
-                  ? 'Exportación finalizada.'
-                  : 'Reporte ${extension.toUpperCase()} guardado correctamente.';
-        });
-      }
-    } on AppException catch (error) {
-      _showError(error.message);
-    } catch (_) {
-      _showError('No se pudo generar el reporte ${extension.toUpperCase()}.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 

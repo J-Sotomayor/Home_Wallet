@@ -19,12 +19,6 @@
 
 HomeWallet es una aplicación multiplataforma desarrollada con Flutter para administrar finanzas personales y compartidas. Permite que los integrantes de un hogar registren y consulten movimientos en tiempo real, organicen presupuestos y metas, importen estados de cuenta y mantengan la información financiera cifrada antes de enviarla a Firebase.
 
-<p align="center">
-  <img src="docs/evidence/branding/android_dashboard_light.png" alt="Panel principal de HomeWallet en tema claro" width="300">
-  &nbsp;&nbsp;
-  <img src="docs/evidence/branding/android_dashboard_dark.png" alt="Panel principal de HomeWallet en tema oscuro" width="300">
-</p>
-
 ## Funcionalidades principales
 
 - Registro e inicio de sesión con correo o Google, verificación de correo, recuperación de contraseña y gestión del perfil.
@@ -45,10 +39,8 @@ HomeWallet es una aplicación multiplataforma desarrollada con Flutter para admi
 - Reglas de Firestore basadas en membresía, rol y correo verificado.
 - Invitaciones protegidas con tokens aleatorios de 256 bits, hash SHA-256, expiración y límites de uso.
 - Firebase App Check preparado para Play Integrity y App Attest/DeviceCheck.
-- Firebase Storage cerrado por defecto mientras no exista un flujo de adjuntos con cifrado de extremo a extremo.
+- Fotos de perfil protegidas por propietario, tipo, nombre y tamaño mediante reglas de Firebase Storage.
 - Procesamiento de archivos bancarios en el dispositivo.
-
-Consulta la [revisión de seguridad](docs/security/security_review.md) y la [matriz de trazabilidad](docs/traceability.md) para conocer el alcance técnico y las validaciones realizadas.
 
 ## Tecnologías
 
@@ -56,7 +48,7 @@ Consulta la [revisión de seguridad](docs/security/security_review.md) y la [mat
 |---|---|
 | Aplicación | Flutter 3.29.2, Dart 3.7.2, Material Design |
 | Backend | Firebase Authentication, Firestore, Cloud Functions, Storage y Cloud Messaging |
-| Observabilidad | Firebase Crashlytics y Analytics |
+| Observabilidad | Firebase Crashlytics |
 | Seguridad | App Check, `cryptography`, `flutter_secure_storage` y `local_auth` |
 | Funciones | TypeScript, Node.js 22 y Firebase Functions Gen 2 |
 | Reportes | Excel, PDF y CSV |
@@ -138,6 +130,14 @@ El código está configurado para el proyecto de producción de HomeWallet. Para
 
 No almacenes archivos de cuentas de servicio, contraseñas, certificados de firma ni variables `.env` en el repositorio.
 
+Los valores de `lib/firebase_options.dart` y
+`android/app/google-services.json` son configuración pública del cliente, no
+credenciales de autorización. Deben utilizarse únicamente con servicios de
+Firebase y mantenerse restringidos a las APIs y aplicaciones correspondientes
+desde Google Cloud. La protección de los datos depende de IAM, Firebase
+Security Rules y App Check. Consulta la
+[documentación oficial sobre claves de Firebase](https://firebase.google.com/docs/projects/api-keys).
+
 ## Calidad y pruebas
 
 Ejecuta el análisis estático y la suite de Flutter:
@@ -154,15 +154,20 @@ Para validar las reglas de Firestore, inicia los emuladores en una terminal:
 firebase emulators:start --only auth,firestore,functions,storage
 ```
 
-Y ejecuta la suite de reglas en otra terminal:
+Y ejecuta las suites de reglas en otra terminal:
 
 ```bash
 npm --prefix functions run test:rules
+npm --prefix functions run test:storage-rules
 ```
 
 ## Compilación
 
-Android APK para pruebas internas:
+Para una compilación release, copia `android/key.properties.example` como
+`android/key.properties`, completa la ruta y contraseñas del keystore real y
+mantén ambos archivos sensibles fuera del repositorio.
+
+Android APK para pruebas internas firmadas:
 
 ```bash
 flutter build apk --release
@@ -180,7 +185,9 @@ iOS, desde macOS:
 flutter build ios --release
 ```
 
-> Antes de distribuir la aplicación, sustituye la firma Android de depuración por un keystore de producción, registra las credenciales de release en Firebase/App Check y completa las pruebas en dispositivos físicos.
+> El proyecto no usa la firma debug en release. Sin `android/key.properties` y
+> un keystore válido no existe un artefacto apto para publicar. Registra también
+> las huellas release en Firebase/App Check y completa pruebas físicas.
 
 ## Estructura del proyecto
 
@@ -188,7 +195,6 @@ flutter build ios --release
 homewallet/
 ├── android/                 # Proyecto nativo Android
 ├── assets/                  # Marca, iconos, splash y tipografías
-├── docs/                    # Seguridad, trazabilidad y evidencias
 ├── functions/               # Cloud Functions y pruebas de reglas
 ├── ios/                     # Proyecto nativo iOS
 ├── lib/
@@ -201,11 +207,7 @@ homewallet/
 
 ## Documentación
 
-- [Informe de implementación](docs/final_implementation_report.md)
-- [Trazabilidad funcional](docs/traceability.md)
-- [Revisión de seguridad](docs/security/security_review.md)
-- [Guía de marca](docs/branding/brand_guidelines.md)
-- [Reporte de contraste](docs/branding/color_contrast_report.md)
+- [Guía de marca](assets/branding/brand_guidelines.md)
 
 ## Estado del proyecto
 

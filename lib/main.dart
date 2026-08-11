@@ -7,12 +7,14 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/services/app_services.dart';
 import 'app/theme/app_theme.dart';
 import 'app/theme/theme_controller.dart';
 import 'app/widgets/homewallet_logo.dart';
 import 'features/auth/presentation/auth_gate.dart';
+import 'features/onboarding/presentation/welcome_screen.dart';
 import 'firebase_options.dart';
 
 @pragma('vm:entry-point')
@@ -34,7 +36,7 @@ Future<void> main() async {
     if (!kIsWeb) {
       FirebaseFirestore.instance.settings = const Settings(
         persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+        cacheSizeBytes: 100 * 1024 * 1024,
       );
       await FirebaseAppCheck.instance.activate(
         providerAndroid:
@@ -50,6 +52,9 @@ Future<void> main() async {
         FlutterError.presentError(details);
         FirebaseCrashlytics.instance.recordFlutterFatalError(details);
       };
+      await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
+        !kDebugMode,
+      );
       PlatformDispatcher.instance.onError = (error, stack) {
         FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
         return true;
@@ -111,15 +116,24 @@ class _HomeWalletAppState extends State<HomeWalletApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'HomeWallet',
+      locale: const Locale('es', 'EC'),
+      supportedLocales: const [Locale('es', 'EC'), Locale('es')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: widget.themeController.themeMode,
       home:
           widget.services == null
               ? StartupErrorScreen(error: widget.startupError)
-              : AuthGate(
-                services: widget.services!,
-                themeController: widget.themeController,
+              : FirstLaunchGate(
+                child: AuthGate(
+                  services: widget.services!,
+                  themeController: widget.themeController,
+                ),
               ),
     );
   }

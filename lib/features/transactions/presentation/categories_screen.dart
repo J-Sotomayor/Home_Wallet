@@ -1,23 +1,44 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/errors/app_exception.dart';
+import '../../auth/data/auth_repository.dart';
 import '../data/finance_repository.dart';
 import '../domain/finance_models.dart';
 import '../domain/transaction_categories.dart';
 
-class CategoriesScreen extends StatelessWidget {
+class CategoriesScreen extends StatefulWidget {
   const CategoriesScreen({
     super.key,
     required this.householdId,
     required this.uid,
     required this.repository,
+    required this.authRepository,
+    required this.preferredCategories,
     required this.canContribute,
   });
 
   final String householdId;
   final String uid;
   final FinanceRepository repository;
+  final AuthRepository authRepository;
+  final Set<String> preferredCategories;
   final bool canContribute;
+
+  @override
+  State<CategoriesScreen> createState() => _CategoriesScreenState();
+}
+
+class _CategoriesScreenState extends State<CategoriesScreen> {
+  late final Set<String> _preferred =
+      widget.preferredCategories.isEmpty
+          ? TransactionCategories.all.toSet()
+          : {...widget.preferredCategories};
+  bool _savingPreferences = false;
+
+  String get householdId => widget.householdId;
+  String get uid => widget.uid;
+  FinanceRepository get repository => widget.repository;
+  bool get canContribute => widget.canContribute;
 
   @override
   Widget build(BuildContext context) {
@@ -51,8 +72,25 @@ class CategoriesScreen extends StatelessWidget {
                   leading: Icon(Icons.auto_awesome_outlined),
                   title: Text('Categorías predeterminadas'),
                   subtitle: Text(
-                    'Siempre disponibles; las sugerencias automáticas las usan al analizar la descripción.',
+                    'Activa las que quieras ver al registrar movimientos. Esta selección es solo para tu perfil.',
                   ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  children: [
+                    Expanded(child: Text('${_preferred.length} activas')),
+                    TextButton(
+                      onPressed:
+                          _savingPreferences
+                              ? null
+                              : () => _replacePreferences(
+                                TransactionCategories.all.toSet(),
+                              ),
+                      child: const Text('Activar todas'),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 14),
@@ -68,9 +106,20 @@ class CategoriesScreen extends StatelessWidget {
                       ...TransactionCategories.forType(type).map(
                         (name) => ListTile(
                           dense: true,
-                          leading: const Icon(Icons.lock_outline, size: 19),
+                          leading: Checkbox(
+                            value: _preferred.contains(name),
+                            onChanged:
+                                _savingPreferences
+                                    ? null
+                                    : (value) =>
+                                        _togglePreference(name, value ?? false),
+                          ),
                           title: Text(name),
-                          subtitle: const Text('Predeterminada'),
+                          subtitle: Text(
+                            _preferred.contains(name)
+                                ? 'Visible al registrar'
+                                : 'Disponible para activar',
+                          ),
                         ),
                       ),
                       ...custom
@@ -115,6 +164,47 @@ class CategoriesScreen extends StatelessWidget {
         },
       ),
     );
+  }
+
+  Future<void> _togglePreference(String name, bool enabled) async {
+    final next = {..._preferred};
+    enabled ? next.add(name) : next.remove(name);
+    if (next.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Mantén al menos una categoría activa.')),
+      );
+      return;
+    }
+    await _replacePreferences(next);
+  }
+
+  Future<void> _replacePreferences(Set<String> next) async {
+    final previous = {..._preferred};
+    setState(() {
+      _preferred
+        ..clear()
+        ..addAll(next);
+      _savingPreferences = true;
+    });
+    try {
+      await widget.authRepository.updatePreferredCategories(
+        _preferred.toList(),
+      );
+    } on AppException catch (error) {
+      if (mounted) {
+        setState(
+          () =>
+              _preferred
+                ..clear()
+                ..addAll(previous),
+        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _savingPreferences = false);
+    }
   }
 
   Future<void> _edit(BuildContext context, {FinanceCategory? existing}) async {

@@ -52,8 +52,10 @@ class FinanceInsights extends StatelessWidget {
     final income = _total(monthly, TransactionType.income);
     final expenses = _total(monthly, TransactionType.expense);
     final savings = _total(monthly, TransactionType.saving);
-    final expenseShare = income == 0 ? 0.0 : expenses / income;
-    final savingsRate = income == 0 ? 0.0 : (savings / income).clamp(0.0, 1.0);
+    final double? expenseShare =
+        income == 0 || expenses == 0 ? null : expenses / income;
+    final double? savingsRate =
+        income == 0 ? null : (savings / income).clamp(0.0, 1.0);
     final byCategory = <String, int>{};
     for (final item in monthly.where(
       (item) => item.type == TransactionType.expense,
@@ -81,9 +83,18 @@ class FinanceInsights extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    'Análisis de ${_months[now.month - 1]}',
-                    style: Theme.of(context).textTheme.titleMedium,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Resumen de ${_months[now.month - 1]}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        'Solo movimientos registrados este mes',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -102,17 +113,19 @@ class FinanceInsights extends StatelessWidget {
               children: [
                 Expanded(
                   child: _PercentageTile(
-                    label: 'Gasto/ingreso',
+                    label: 'Ingresos usados',
                     value: expenseShare,
-                    color: expenseColor,
+                    color: expenseShare == null ? scheme.primary : expenseColor,
+                    emptyLabel: income == 0 ? 'Sin base' : 'Sin gastos',
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: _PercentageTile(
-                    label: 'Tasa de ahorro',
+                    label: 'Ingreso ahorrado',
                     value: savingsRate,
                     color: incomeColor,
+                    emptyLabel: 'Sin base',
                   ),
                 ),
               ],
@@ -126,8 +139,16 @@ class FinanceInsights extends StatelessWidget {
             if (expenses == 0)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
-                child: Center(
-                  child: Text('Agrega gastos este mes para ver el gráfico.'),
+                child: Row(
+                  children: [
+                    Icon(Icons.pie_chart_outline),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Cuando registres gastos aparecerá aquí su distribución por categorías.',
+                      ),
+                    ),
+                  ],
                 ),
               )
             else ...[
@@ -299,11 +320,13 @@ class _PercentageTile extends StatelessWidget {
     required this.label,
     required this.value,
     required this.color,
+    required this.emptyLabel,
   });
 
   final String label;
-  final double value;
+  final double? value;
   final Color color;
+  final String emptyLabel;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -318,7 +341,9 @@ class _PercentageTile extends StatelessWidget {
         Text(label, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 4),
         Text(
-          '${(value * 100).clamp(0, 999).toStringAsFixed(1)}%',
+          value == null
+              ? emptyLabel
+              : '${(value! * 100).clamp(0, 999).toStringAsFixed(1)}%',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(color: color),
         ),
       ],

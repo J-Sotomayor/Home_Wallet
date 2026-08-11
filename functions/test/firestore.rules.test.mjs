@@ -144,6 +144,73 @@ test("acepta una transacción cifrada y rechaza texto plano", async () => {
   );
 });
 
+test("rechaza movimientos manuales con fecha futura", async () => {
+  const member = environment
+    .authenticatedContext("member", {email_verified: true})
+    .firestore();
+  await assertFails(
+    setDoc(doc(member, "households/home/transactions/future"), {
+      schemaVersion: 1,
+      type: "expense",
+      occurredAt: Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      createdBy: "member",
+      payload: cipher,
+    }),
+  );
+});
+
+test("rechaza movimientos anteriores a la ventana de 365 días", async () => {
+  const member = environment
+    .authenticatedContext("member", {email_verified: true})
+    .firestore();
+  await assertFails(
+    setDoc(doc(member, "households/home/transactions/expired"), {
+      schemaVersion: 1,
+      type: "expense",
+      occurredAt: Timestamp.fromMillis(Date.now() - 366 * 24 * 60 * 60 * 1000),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      createdBy: "member",
+      payload: cipher,
+    }),
+  );
+});
+
+test("mantiene las divisiones cifradas en una colección independiente", async () => {
+  const member = environment
+    .authenticatedContext("member", {email_verified: true})
+    .firestore();
+  const junior = environment
+    .authenticatedContext("junior", {email_verified: true})
+    .firestore();
+  const split = {
+    schemaVersion: 1,
+    occurredAt: Timestamp.now(),
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    createdBy: "member",
+    payload: cipher,
+  };
+
+  await assertSucceeds(
+    setDoc(doc(member, "households/home/sharedExpenses/dinner"), split),
+  );
+  await assertFails(
+    setDoc(doc(junior, "households/home/sharedExpenses/blocked"), {
+      ...split,
+      createdBy: "junior",
+    }),
+  );
+  await assertFails(
+    setDoc(doc(member, "households/home/sharedExpenses/plain"), {
+      ...split,
+      payload: {description: "Cena visible", totalMinor: 9000},
+    }),
+  );
+});
+
 test("impide modificar o borrar registros ajenos a un miembro común", async () => {
   const member = environment
     .authenticatedContext("member", {email_verified: true})
@@ -201,6 +268,30 @@ test("cada usuario administra únicamente sus tokens push", async () => {
 
   await assertSucceeds(setDoc(doc(owner, "users/owner/devices/device-1"), device));
   await assertFails(setDoc(doc(member, "users/owner/devices/device-2"), device));
+});
+
+test("el usuario puede guardar su selección de categorías", async () => {
+  const owner = environment
+    .authenticatedContext("owner", {email_verified: true})
+    .firestore();
+  const profile = {
+    displayName: "Persona propietaria",
+    phoneNumber: "",
+    photoUrl: null,
+    activeHouseholdId: null,
+    householdIds: [],
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    onboardingCompleted: false,
+    preferredCategories: [],
+  };
+  await assertSucceeds(setDoc(doc(owner, "users/owner"), profile));
+  await assertSucceeds(updateDoc(doc(owner, "users/owner"), {
+    onboardingCompleted: true,
+    onboardingCompletedAt: Timestamp.now(),
+    preferredCategories: ["Luz", "Agua", "Internet"],
+    updatedAt: Timestamp.now(),
+  }));
 });
 
 test("permite recurrencias cifradas y bloquea al lector", async () => {
