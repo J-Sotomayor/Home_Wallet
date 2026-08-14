@@ -72,6 +72,9 @@ class _HouseholdSpacesScreenState extends State<HouseholdSpacesScreen> {
               return const Center(child: CircularProgressIndicator());
             }
             final households = snapshot.data!;
+            final hasIndividual = households.any(
+              (household) => household.isIndividual,
+            );
             return ListView(
               padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
               children: [
@@ -84,6 +87,22 @@ class _HouseholdSpacesScreenState extends State<HouseholdSpacesScreen> {
                 const SizedBox(height: 16),
                 ...households.map(_spaceCard),
                 const SizedBox(height: 12),
+                if (!hasIndividual) ...[
+                  Card(
+                    child: ListTile(
+                      key: const Key('create_individual_space'),
+                      enabled: !_busy,
+                      leading: const Icon(Icons.person_add_alt_1_outlined),
+                      title: const Text('Crear espacio Individual'),
+                      subtitle: const Text(
+                        'Puedes tener uno para tus finanzas privadas.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _createIndividualSpace,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 Card(
                   child: ListTile(
                     key: const Key('create_shared_space'),
@@ -217,15 +236,17 @@ class _HouseholdSpacesScreenState extends State<HouseholdSpacesScreen> {
                   icon: Icons.home_outlined,
                   title: 'Tipo de espacio',
                   subtitle:
-                      'El nombre y los movimientos no cambiarán. Individual requiere exactamente una persona.',
+                      'Puedes ajustar el tipo compartido sin trasladar ni mezclar movimientos.',
                 ),
                 const SizedBox(height: 14),
-                for (final kind in HouseholdKind.values)
+                for (final kind in const [
+                  HouseholdKind.couple,
+                  HouseholdKind.family,
+                  HouseholdKind.group,
+                ])
                   Builder(
                     builder: (context) {
                       final enabled =
-                          (kind != HouseholdKind.individual ||
-                              household.memberCount == 1) &&
                           (kind != HouseholdKind.couple ||
                               household.memberCount <= 2) &&
                           (kind == HouseholdKind.family || !hasJunior);
@@ -248,8 +269,6 @@ class _HouseholdSpacesScreenState extends State<HouseholdSpacesScreen> {
                                     : Text(
                                       kind != HouseholdKind.family && hasJunior
                                           ? 'Cambia primero el rol de Integrante Jr.'
-                                          : kind == HouseholdKind.individual
-                                          ? 'Retira primero a los demás integrantes.'
                                           : 'Pareja admite como máximo dos integrantes.',
                                     ),
                             trailing:
@@ -344,6 +363,24 @@ class _HouseholdSpacesScreenState extends State<HouseholdSpacesScreen> {
         name,
         widget.user,
         kind: kind,
+      );
+      if (mounted) Navigator.pop(context, householdId);
+    } on AppException catch (error) {
+      _showError(error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _createIndividualSpace() async {
+    final name = await _askName(HouseholdKind.individual);
+    if (name == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final householdId = await widget.repository.createHousehold(
+        name,
+        widget.user,
+        kind: HouseholdKind.individual,
       );
       if (mounted) Navigator.pop(context, householdId);
     } on AppException catch (error) {

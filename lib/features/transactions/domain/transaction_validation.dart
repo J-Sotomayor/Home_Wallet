@@ -23,10 +23,9 @@ void validateTransactionDraft(
     );
     final reference = now ?? DateTime.now();
     final currentDay = DateTime(reference.year, reference.month, reference.day);
-    final cutoff = currentDay.subtract(const Duration(days: 364));
-    if (occurredDay.isBefore(cutoff) || occurredDay.isAfter(currentDay)) {
+    if (occurredDay.isAfter(currentDay)) {
       throw const AppException(
-        'HomeWallet conserva únicamente movimientos de los últimos 365 días.',
+        'La fecha del movimiento no puede estar en el futuro.',
       );
     }
   }

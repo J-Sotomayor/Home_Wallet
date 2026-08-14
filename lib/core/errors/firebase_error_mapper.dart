@@ -6,24 +6,37 @@ import 'app_exception.dart';
 AppException mapFirebaseError(Object error) {
   if (error is AppException) return error;
   if (error is FirebaseAuthException) {
-    final message = switch (error.code) {
-      'invalid-email' => 'El correo electrónico no es válido.',
-      'invalid-credential' ||
-      'user-not-found' ||
-      'wrong-password' => 'El correo o la contraseña son incorrectos.',
-      'user-disabled' => 'Esta cuenta fue deshabilitada.',
-      'email-already-in-use' => 'Ya existe una cuenta con ese correo.',
-      'weak-password' => 'La contraseña no cumple los requisitos de seguridad.',
-      'too-many-requests' =>
-        'Se realizaron demasiados intentos. Espera unos minutos.',
-      'network-request-failed' =>
-        'No se pudo conectar. Revisa tu conexión a Internet.',
-      'operation-not-allowed' =>
-        'Este método de acceso no está habilitado en Firebase.',
-      'requires-recent-login' =>
-        'Por seguridad, vuelve a iniciar sesión antes de continuar.',
-      _ => 'No se pudo completar la autenticación. Inténtalo nuevamente.',
-    };
+    final firebaseMessage = error.message?.toLowerCase() ?? '';
+    final appCheckRejected =
+        firebaseMessage.contains('app check') ||
+        firebaseMessage.contains('appcheck');
+    final message =
+        appCheckRejected
+            ? 'Firebase no pudo validar esta instalación. Instala la versión más reciente de HomeWallet.'
+            : switch (error.code) {
+              'invalid-email' => 'El correo electrónico no es válido.',
+              'invalid-credential' ||
+              'user-not-found' ||
+              'wrong-password' => 'El correo o la contraseña son incorrectos.',
+              'app-not-authorized' ||
+              'invalid-cert-hash' ||
+              'invalid-app-credential' =>
+                'Esta instalación no está autorizada por Firebase. Instala la versión más reciente de HomeWallet.',
+              'user-disabled' => 'Esta cuenta fue deshabilitada.',
+              'email-already-in-use' => 'Ya existe una cuenta con ese correo.',
+              'weak-password' =>
+                'La contraseña no cumple los requisitos de seguridad.',
+              'too-many-requests' =>
+                'Se realizaron demasiados intentos. Espera unos minutos.',
+              'network-request-failed' =>
+                'No se pudo conectar. Revisa tu conexión a Internet.',
+              'operation-not-allowed' =>
+                'Este método de acceso no está habilitado en Firebase.',
+              'requires-recent-login' =>
+                'Por seguridad, vuelve a iniciar sesión antes de continuar.',
+              _ =>
+                'No se pudo completar la autenticación. Inténtalo nuevamente.',
+            };
     return AppException(message, code: error.code);
   }
   if (error is FirebaseFunctionsException) {

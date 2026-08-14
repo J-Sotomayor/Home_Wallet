@@ -12,7 +12,7 @@
   <img alt="Flutter 3.29.2" src="https://img.shields.io/badge/Flutter-3.29.2-02569B?logo=flutter&logoColor=white">
   <img alt="Dart 3.7.2" src="https://img.shields.io/badge/Dart-3.7.2-0175C2?logo=dart&logoColor=white">
   <img alt="Firebase" src="https://img.shields.io/badge/Firebase-Backend-FFCA28?logo=firebase&logoColor=black">
-  <img alt="Versión 1.0.2" src="https://img.shields.io/badge/versi%C3%B3n-1.0.2-blue">
+  <img alt="Versión 1.0.4" src="https://img.shields.io/badge/versi%C3%B3n-1.0.4-blue">
 </p>
 
 ## Descripción
@@ -25,7 +25,7 @@ HomeWallet es una aplicación Android desarrollada con Flutter para administrar 
 - Sesión persistente protegida con biometría o la credencial segura del dispositivo.
 - Espacios Individual, Pareja, Familia y Grupo, con cambio seguro entre espacios y datos separados.
 - Roles Propietario, Moderador, Miembro y Lector/Integrante Jr., con permisos aplicados por backend.
-- Invitaciones mediante QR o código manual, con token de un solo uso y vencimiento automático.
+- Invitaciones mediante QR o código manual, con rol fijado por quien invita, revocación, token de un solo uso y vencimiento automático.
 - Registro de ingresos, gastos y ahorros, con categorías, filtros y saldos consolidados.
 - Presupuestos y metas editables, movimientos recurrentes y deudas compartidas con reparto igualitario, porcentual, proporcional por ingresos o personalizado.
 - Importación local de estados de cuenta en CSV, XLS, XLSX y PDF compatible, con selección y detección de duplicados mediante SHA-256.
@@ -41,7 +41,8 @@ HomeWallet es una aplicación Android desarrollada con Flutter para administrar 
 - Claves por espacio almacenadas con Android Keystore.
 - Reglas de Firestore basadas en membresía, rol y correo verificado.
 - Invitaciones protegidas con tokens aleatorios de 256 bits, hash SHA-256, expiración y límites de uso.
-- Firebase App Check preparado para Play Integrity.
+- Firebase App Check preparado para Play Integrity en distribuciones por Google Play.
+- La exigencia e inicialización de App Check permanecen desactivadas en los APK instalados directamente para no bloquear teléfonos legítimos; las reglas de Firebase, la autenticación y el cifrado continúan aplicándose.
 - Fotos de perfil protegidas por propietario, tipo, nombre y tamaño mediante reglas de Firebase Storage.
 - Procesamiento de archivos bancarios en el dispositivo.
 
@@ -172,8 +173,13 @@ flutter build apk --release
 Android App Bundle para Google Play:
 
 ```bash
-flutter build appbundle --release
+flutter build appbundle --release --dart-define=HOMEWALLET_ENABLE_APP_CHECK=true
 ```
+
+El APK directo no activa App Check. Solo debe habilitarse la constante
+`HOMEWALLET_ENABLE_APP_CHECK` cuando el artefacto se distribuya por un canal
+capaz de proporcionar un veredicto válido de Play Integrity y después de
+activar gradualmente la exigencia en Firebase.
 
 > El proyecto no usa la firma debug en release. Sin `android/key.properties` y
 > un keystore válido no existe un artefacto apto para publicar. Registra también
@@ -201,7 +207,7 @@ homewallet/
 
 ## Estado del proyecto
 
-La versión actual es `1.0.2+3`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37). iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere firma de producción, pruebas en los dispositivos Android declarados y la activación controlada de App Check.
+La versión actual es `1.0.4+5`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37) y APK release firmado para pruebas físicas por instalación directa. iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere pruebas en los dispositivos Android declarados y la activación controlada de App Check después de publicar por Google Play o adoptar un proveedor compatible con todos los dispositivos admitidos.
 
 ## Licencia
 

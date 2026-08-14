@@ -139,12 +139,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       .collection('households')
       .doc(householdId)
       .collection('transactions')
-      .where(
-        'occurredAt',
-        isGreaterThanOrEqualTo: Timestamp.fromDate(_transactionCutoff()),
-      )
       .orderBy('occurredAt', descending: true)
-      .limit(1000)
       .snapshots()
       .asyncMap((snapshot) async {
         final key = await _requireKey(householdId);
@@ -1397,10 +1392,4 @@ class FirebaseFinanceRepository implements FinanceRepository {
       participantSharesMinor: _asIntMap(clear['participantSharesMinor']),
     );
   }
-}
-
-DateTime _transactionCutoff() {
-  final now = DateTime.now();
-  final today = DateTime(now.year, now.month, now.day);
-  return today.subtract(const Duration(days: 364));
 }

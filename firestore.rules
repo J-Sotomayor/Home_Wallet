@@ -30,6 +30,11 @@ service cloud.firestore {
         get(memberPath(householdId)).data.role in ['owner', 'admin', 'member'];
     }
 
+    function isCollaborative(householdId) {
+      return get(/databases/$(database)/documents/households/$(householdId)).data.kind
+        in ['couple', 'family', 'group'];
+    }
+
     function validCipher(payload) {
       return payload is map &&
         payload.keys().hasOnly(['v', 'alg', 'ct', 'iv', 'tag']) &&
@@ -131,7 +136,6 @@ service cloud.firestore {
           request.resource.data.schemaVersion == 1 &&
           request.resource.data.type in ['income', 'expense', 'saving'] &&
           request.resource.data.occurredAt is timestamp &&
-          request.resource.data.occurredAt >= request.time - duration.value(365, 'd') &&
           request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
           request.resource.data.createdAt is timestamp &&
           request.resource.data.updatedAt is timestamp &&
@@ -147,7 +151,6 @@ service cloud.firestore {
           request.resource.data.schemaVersion == 1 &&
           request.resource.data.type in ['income', 'expense', 'saving'] &&
           request.resource.data.occurredAt is timestamp &&
-          request.resource.data.occurredAt >= request.time - duration.value(365, 'd') &&
           request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
           request.resource.data.createdAt == resource.data.createdAt &&
           request.resource.data.updatedAt is timestamp &&
@@ -161,19 +164,20 @@ service cloud.firestore {
       match /sharedExpenses/{expenseId} {
         allow read: if isMember(householdId);
         allow create: if canContribute(householdId) &&
+          isCollaborative(householdId) &&
           request.resource.data.keys().hasOnly([
             'schemaVersion', 'occurredAt', 'createdAt', 'updatedAt',
             'createdBy', 'payload'
           ]) &&
           request.resource.data.schemaVersion == 1 &&
           request.resource.data.occurredAt is timestamp &&
-          request.resource.data.occurredAt >= timestamp.date(2000, 1, 1) &&
           request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
           request.resource.data.createdAt is timestamp &&
           request.resource.data.updatedAt is timestamp &&
           request.resource.data.createdBy == request.auth.uid &&
           validCipher(request.resource.data.payload);
         allow update: if canContribute(householdId) &&
+          isCollaborative(householdId) &&
           (resource.data.createdBy == request.auth.uid || isManager(householdId)) &&
           request.resource.data.keys().hasOnly([
             'schemaVersion', 'occurredAt', 'createdAt', 'updatedAt',
@@ -182,7 +186,6 @@ service cloud.firestore {
           request.resource.data.createdBy == resource.data.createdBy &&
           request.resource.data.schemaVersion == 1 &&
           request.resource.data.occurredAt == resource.data.occurredAt &&
-          request.resource.data.occurredAt >= timestamp.date(2000, 1, 1) &&
           request.resource.data.occurredAt <= request.time + duration.value(5, 'm') &&
           request.resource.data.createdAt == resource.data.createdAt &&
           request.resource.data.updatedAt is timestamp &&

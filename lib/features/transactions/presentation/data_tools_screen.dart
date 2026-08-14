@@ -286,21 +286,6 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
         bytes: bytes,
         path: file.path,
       );
-      final today = DateTime.now();
-      final cutoff = DateTime(
-        today.year,
-        today.month,
-        today.day,
-      ).subtract(const Duration(days: 364));
-      final expired =
-          imported.items
-              .where((item) => item.occurredAt.isBefore(cutoff))
-              .length;
-      if (expired > 0) {
-        throw FormatException(
-          '$expired movimientos están fuera del historial permitido de 365 días. Importa un estado de cuenta más reciente.',
-        );
-      }
       if (imported.items.length > 500) {
         throw const FormatException(
           'El archivo supera 500 movimientos. Divídelo en varios periodos.',

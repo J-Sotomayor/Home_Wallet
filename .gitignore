@@ -43,8 +43,7 @@ migrate_working_dir/
 /website/
 /dist/
 
-# Local-only tests and thesis utilities
-**/test/
+# Tests are part of the application and must remain versioned.
 /tool/*thesis*
 /tool/make_contact_sheets.py
 

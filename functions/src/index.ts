@@ -34,8 +34,6 @@ setGlobalOptions({
 
 const db = getFirestore();
 const invitationLifetimeMs = 15 * 60 * 1000;
-const maxHouseholdsPerUser = 5;
-const maxMembersPerHousehold = 12;
 const termsVersion = "2026-08-02";
 
 function requireVerifiedUser(request: CallableRequest<unknown>): string {
@@ -233,12 +231,30 @@ export const createHousehold = onCall(async (request) => {
 
   await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userReference);
-    const householdIds = (userSnapshot.data()?.householdIds ?? []) as unknown[];
-    if (householdIds.length >= maxHouseholdsPerUser) {
-      throw new HttpsError(
-        "resource-exhausted",
-        "Alcanzaste el máximo de espacios permitidos.",
+    const userData = userSnapshot.data();
+    const householdIds = (userData?.householdIds ?? []) as string[];
+    if (kind === "individual") {
+      const registeredIndividual = userData?.individualHouseholdId;
+      if (typeof registeredIndividual === "string" && registeredIndividual.length > 0) {
+        throw new HttpsError(
+          "already-exists",
+          "Ya tienes un espacio Individual.",
+        );
+      }
+      const existingHouseholds = await Promise.all(
+        householdIds.map((householdId) =>
+          transaction.get(db.collection("households").doc(householdId))),
       );
+      const existingIndividuals = existingHouseholds
+        .filter((snapshot) => snapshot.exists && snapshot.data()?.kind === "individual");
+      if (existingIndividuals.length > 0) {
+        throw new HttpsError(
+          "already-exists",
+          existingIndividuals.length === 1 ?
+            "Ya tienes un espacio Individual." :
+            "Tu cuenta tiene varios espacios Individual heredados y requiere revisión antes de crear otro.",
+        );
+      }
     }
     transaction.create(householdReference, {
       createdBy: uid,
@@ -258,6 +274,8 @@ export const createHousehold = onCall(async (request) => {
       userReference,
       {
         householdIds: FieldValue.arrayUnion(householdReference.id),
+        ...(kind === "individual" ?
+          {individualHouseholdId: householdReference.id} : {}),
         updatedAt: FieldValue.serverTimestamp(),
       },
       {merge: true},
@@ -271,51 +289,57 @@ export const createInvitation = onCall(async (request) => {
   const uid = requireVerifiedUser(request);
   const data = requestMap(request);
   const householdId = requiredString(data, "householdId", 128);
+  const requestedRole = data.role === "junior" ? "junior" : "member";
   await enforceRateLimit(uid, "createInvitation", 5_000);
 
-  const memberSnapshot = await db
-    .collection("households")
-    .doc(householdId)
-    .collection("members")
-    .doc(uid)
-    .get();
-  const member = memberSnapshot.data();
-  if (!memberSnapshot.exists ||
-      member?.status !== "active" ||
-      !["owner", "admin"].includes(member?.role as string)) {
-    throw new HttpsError(
-      "permission-denied",
-      "Solo un administrador puede invitar integrantes.",
-    );
-  }
-
   const token = randomBytes(32).toString("base64url");
-  const householdSnapshot = await db.collection("households").doc(householdId).get();
-  const kind = householdSnapshot.data()?.kind ?? "family";
-  if (kind === "individual") {
-    throw new HttpsError(
-      "failed-precondition",
-      "Un espacio Individual no puede generar invitaciones. Crea primero un espacio compartido.",
-    );
-  }
-  if (kind === "couple" && (householdSnapshot.data()?.memberCount ?? 0) >= 2) {
-    throw new HttpsError(
-      "resource-exhausted",
-      "Un espacio Pareja admite como máximo dos integrantes.",
-    );
-  }
   const expiresAt = Timestamp.fromMillis(Date.now() + invitationLifetimeMs);
+  const householdReference = db.collection("households").doc(householdId);
+  const memberReference = householdReference.collection("members").doc(uid);
   // Un único documento por hogar invalida inmediatamente el QR anterior.
   const invitationReference = db.collection("invitations").doc(householdId);
-  await invitationReference.set({
-    householdId,
-    tokenHash: hashToken(token),
-    createdBy: uid,
-    createdAt: FieldValue.serverTimestamp(),
-    expiresAt,
-    status: "active",
-    usedBy: null,
-    usedAt: null,
+  let kind = "family";
+  let role = "member";
+  await db.runTransaction(async (transaction) => {
+    const [household, member] = await Promise.all([
+      transaction.get(householdReference),
+      transaction.get(memberReference),
+    ]);
+    if (!household.exists) {
+      throw new HttpsError("not-found", "El espacio ya no existe.");
+    }
+    if (member.data()?.status !== "active" ||
+        !["owner", "admin"].includes(member.data()?.role as string)) {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo un administrador puede invitar integrantes.",
+      );
+    }
+    kind = household.data()?.kind ?? "family";
+    if (kind === "individual") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Un espacio Individual no puede generar invitaciones. Crea primero un espacio compartido.",
+      );
+    }
+    if (kind === "couple" && (household.data()?.memberCount ?? 0) >= 2) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Un espacio Pareja admite como máximo dos integrantes.",
+      );
+    }
+    role = kind === "family" ? requestedRole : "member";
+    transaction.set(invitationReference, {
+      householdId,
+      tokenHash: hashToken(token),
+      createdBy: uid,
+      createdAt: FieldValue.serverTimestamp(),
+      expiresAt,
+      status: "active",
+      role,
+      usedBy: null,
+      usedAt: null,
+    });
   });
 
   return {
@@ -324,7 +348,43 @@ export const createInvitation = onCall(async (request) => {
     token,
     expiresAt: expiresAt.toMillis(),
     kind,
+    role,
   };
+});
+
+export const revokeInvitation = onCall(async (request) => {
+  const uid = requireVerifiedUser(request);
+  const data = requestMap(request);
+  const householdId = requiredString(data, "householdId", 128);
+  await enforceRateLimit(uid, "revokeInvitation", 2_000);
+
+  const householdReference = db.collection("households").doc(householdId);
+  const memberReference = householdReference.collection("members").doc(uid);
+  const invitationReference = db.collection("invitations").doc(householdId);
+  await db.runTransaction(async (transaction) => {
+    const [household, member, invitation] = await Promise.all([
+      transaction.get(householdReference),
+      transaction.get(memberReference),
+      transaction.get(invitationReference),
+    ]);
+    if (!household.exists) {
+      throw new HttpsError("not-found", "El espacio ya no existe.");
+    }
+    if (member.data()?.status !== "active" ||
+        !["owner", "admin"].includes(member.data()?.role as string)) {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo un administrador puede revocar invitaciones.",
+      );
+    }
+    if (!invitation.exists || invitation.data()?.status !== "active") return;
+    transaction.update(invitationReference, {
+      status: "revoked",
+      revokedBy: uid,
+      revokedAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return {ok: true};
 });
 
 export const acceptInvitation = onCall(async (request) => {
@@ -332,7 +392,6 @@ export const acceptInvitation = onCall(async (request) => {
   const data = requestMap(request);
   const invitationId = requiredString(data, "invitationId", 128);
   const token = requiredString(data, "token", 256);
-  const requestedRole = data.requestedRole === "junior" ? "junior" : "member";
   if (token.length < 32) {
     throw new HttpsError("invalid-argument", "Token de invitación inválido.");
   }
@@ -348,6 +407,12 @@ export const acceptInvitation = onCall(async (request) => {
       throw new HttpsError("not-found", "La invitación no existe.");
     }
     const invitation = invitationSnapshot.data()!;
+    if (invitation.status === "revoked") {
+      throw new HttpsError(
+        "failed-precondition",
+        "La invitación fue revocada. Solicita una nueva.",
+      );
+    }
     if (invitation.status !== "active" || invitation.usedBy !== null) {
       throw new HttpsError("already-exists", "La invitación ya fue utilizada.");
     }
@@ -363,10 +428,9 @@ export const acceptInvitation = onCall(async (request) => {
     acceptedHouseholdId = householdId;
     const householdReference = db.collection("households").doc(householdId);
     const memberReference = householdReference.collection("members").doc(uid);
-    const [householdSnapshot, memberSnapshot, userSnapshot] = await Promise.all([
+    const [householdSnapshot, memberSnapshot] = await Promise.all([
       transaction.get(householdReference),
       transaction.get(memberReference),
-      transaction.get(userReference),
     ]);
     if (!householdSnapshot.exists) {
       throw new HttpsError("not-found", "El espacio ya no existe.");
@@ -378,24 +442,15 @@ export const acceptInvitation = onCall(async (request) => {
         "No es posible incorporarse a un espacio Individual.",
       );
     }
-    const role = kind === "family" ? requestedRole : "member";
+    const invitedRole = invitation.role === "junior" ? "junior" : "member";
+    const role = kind === "family" ? invitedRole : "member";
     const alreadyMember =
       memberSnapshot.exists && memberSnapshot.data()?.status === "active";
-    const memberLimit = kind === "couple" ? 2 : maxMembersPerHousehold;
-    if (!alreadyMember &&
-        (householdSnapshot.data()?.memberCount ?? 0) >= memberLimit) {
+    if (!alreadyMember && kind === "couple" &&
+        (householdSnapshot.data()?.memberCount ?? 0) >= 2) {
       throw new HttpsError(
         "resource-exhausted",
-        kind === "couple" ?
-          "El espacio Pareja ya tiene dos integrantes." :
-          "El espacio alcanzó el máximo de integrantes.",
-      );
-    }
-    const householdIds = (userSnapshot.data()?.householdIds ?? []) as unknown[];
-    if (!alreadyMember && householdIds.length >= maxHouseholdsPerUser) {
-      throw new HttpsError(
-        "resource-exhausted",
-        "Alcanzaste el máximo de espacios permitidos.",
+        "El espacio Pareja ya tiene dos integrantes.",
       );
     }
 
@@ -450,16 +505,15 @@ export const updateHouseholdKind = onCall(async (request) => {
 
   const householdReference = db.collection("households").doc(householdId);
   const ownerReference = householdReference.collection("members").doc(uid);
-  const invitationReference = db.collection("invitations").doc(householdId);
-  const activeMembers = await householdReference
+  const activeMembersQuery = householdReference
     .collection("members")
-    .where("status", "==", "active")
-    .get();
+    .where("status", "==", "active");
 
   await db.runTransaction(async (transaction) => {
-    const [household, owner] = await Promise.all([
+    const [household, owner, activeMembers] = await Promise.all([
       transaction.get(householdReference),
       transaction.get(ownerReference),
+      transaction.get(activeMembersQuery),
     ]);
     if (!household.exists) {
       throw new HttpsError("not-found", "El espacio ya no existe.");
@@ -471,17 +525,10 @@ export const updateHouseholdKind = onCall(async (request) => {
       );
     }
     const currentKind = household.data()?.kind ?? "family";
-    if (currentKind === "individual" && kind !== "individual") {
+    if ((currentKind === "individual") !== (kind === "individual")) {
       throw new HttpsError(
         "failed-precondition",
-        "Crea un espacio compartido nuevo para conservar privados tus movimientos personales.",
-      );
-    }
-    if (kind === "individual" &&
-        ((household.data()?.memberCount ?? 0) !== 1 || activeMembers.size !== 1)) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Solo puedes usar Individual cuando queda exactamente un integrante.",
+        "Individual no puede convertirse ni recibir datos de un espacio compartido. Crea otro espacio para conservar la separación.",
       );
     }
     if (kind === "couple" &&
@@ -503,7 +550,6 @@ export const updateHouseholdKind = onCall(async (request) => {
       privatePayload,
       updatedAt: FieldValue.serverTimestamp(),
     });
-    if (kind === "individual") transaction.delete(invitationReference);
   });
   return {ok: true, kind};
 });
@@ -734,7 +780,8 @@ export const cancelAccountDeletion = onCall(async (request) => {
 
 export const processAccountDeletions = onSchedule({
   schedule: "every 60 minutes",
-  region: primaryRegion,
+  // Cloud Scheduler is not available in southamerica-west1.
+  region: "us-central1",
   timeZone: "America/Guayaquil",
 }, async () => {
   const due = await db
@@ -759,7 +806,8 @@ export const processAccountDeletions = onSchedule({
 
 export const notifyDueRecurring = onSchedule({
   schedule: "every 15 minutes",
-  region: primaryRegion,
+  // Cloud Scheduler is not available in southamerica-west1.
+  region: "us-central1",
   timeZone: "America/Guayaquil",
 }, async () => {
   const due = await db
@@ -798,35 +846,6 @@ export const notifyDueRecurring = onSchedule({
     }
   }
 });
-
-export const deleteExpiredTransactions = onSchedule(
-  {
-    schedule: "every day 03:15",
-    timeZone: "America/Guayaquil",
-    timeoutSeconds: 300,
-    memory: "256MiB",
-  },
-  async () => {
-    const cutoff = Timestamp.fromMillis(Date.now() - 365 * 24 * 60 * 60 * 1000);
-    let removed = 0;
-    while (true) {
-      const snapshot = await db
-        .collectionGroup("transactions")
-        .where("occurredAt", "<", cutoff)
-        .limit(400)
-        .get();
-      if (snapshot.empty) break;
-      const batch = db.batch();
-      snapshot.docs.forEach((document) => batch.delete(document.ref));
-      await batch.commit();
-      removed += snapshot.size;
-      if (snapshot.size < 400) break;
-    }
-    if (removed > 0) {
-      console.info(`Deleted ${removed} transactions older than 365 days.`);
-    }
-  },
-);
 
 function addBusinessDays(value: Date, days: number): Date {
   const result = new Date(value);

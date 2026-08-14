@@ -85,34 +85,41 @@ class NotificationService {
   }
 
   Future<bool> registerUser(String uid) async {
-    _currentUid = uid;
-    if (!await isEnabled(uid)) return false;
-    final permission = await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-    if (permission.authorizationStatus == AuthorizationStatus.denied) {
-      final preferences = await SharedPreferences.getInstance();
-      await preferences.setBool(_enabledKey(uid), false);
+    try {
+      _currentUid = uid;
+      if (!await isEnabled(uid)) return false;
+      final permission = await _messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+      );
+      if (permission.authorizationStatus == AuthorizationStatus.denied) {
+        final preferences = await SharedPreferences.getInstance();
+        await preferences.setBool(_enabledKey(uid), false);
+        return false;
+      }
+      if (!kIsWeb && Platform.isAndroid) {
+        await _local
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >()
+            ?.requestNotificationsPermission();
+      }
+      final token = await _messaging.getToken();
+      if (token == null) return false;
+      await _saveToken(uid, token);
+      await _tokenSubscription?.cancel();
+      _tokenSubscription = _messaging.onTokenRefresh.listen(
+        (value) => _saveToken(uid, value),
+      );
+      return true;
+    } catch (error) {
+      // Authentication and the rest of HomeWallet remain usable even when
+      // FCM is unavailable (for example, on an Android device without GMS).
+      debugPrint('No se pudo registrar el dispositivo para FCM: $error');
       return false;
     }
-    if (!kIsWeb && Platform.isAndroid) {
-      await _local
-          .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
-          >()
-          ?.requestNotificationsPermission();
-    }
-    final token = await _messaging.getToken();
-    if (token == null) return false;
-    await _saveToken(uid, token);
-    await _tokenSubscription?.cancel();
-    _tokenSubscription = _messaging.onTokenRefresh.listen(
-      (value) => _saveToken(uid, value),
-    );
-    return true;
   }
 
   Future<void> unregisterUser(String uid) async {

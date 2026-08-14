@@ -534,7 +534,8 @@ class _DashboardTab extends StatelessWidget {
                                   onOpenSavings: onOpenSavings,
                                   onOpenFamily:
                                       household.canManage
-                                          ? () => _openInvite(context)
+                                          ? () =>
+                                              _openInvite(context, household)
                                           : () =>
                                               _openMembers(context, household),
                                 ),
@@ -680,12 +681,13 @@ class _DashboardTab extends StatelessWidget {
     if (imported == true) onImportCompleted();
   }
 
-  void _openInvite(BuildContext context) {
+  void _openInvite(BuildContext context, Household household) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder:
             (_) => FamilyInviteScreen(
               householdId: householdId,
+              householdKind: household.kind,
               repository: services.households,
             ),
       ),
@@ -3635,7 +3637,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 20),
               Text(
-                'HomeWallet 1.0.2 · Firebase Blaze',
+                'HomeWallet 1.0.4 · Firebase Blaze',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -4439,7 +4441,7 @@ class _TransactionFormState extends State<_TransactionForm> {
       context: context,
       locale: const Locale('es', 'EC'),
       initialDate: current.isAfter(today) ? today : current,
-      firstDate: today.subtract(const Duration(days: 364)),
+      firstDate: DateTime(1),
       lastDate: today,
       helpText: 'FECHA DEL MOVIMIENTO',
       cancelText: 'CANCELAR',

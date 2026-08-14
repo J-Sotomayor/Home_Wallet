@@ -19,6 +19,14 @@ import 'features/auth/presentation/auth_gate.dart';
 import 'features/onboarding/presentation/welcome_screen.dart';
 import 'firebase_options.dart';
 
+// Directly distributed APKs are not installed by Google Play and therefore
+// cannot be expected to produce a Play Integrity verdict on every device.
+// Enable App Check only for builds distributed through a trusted channel.
+const _enableAppCheck = bool.fromEnvironment(
+  'HOMEWALLET_ENABLE_APP_CHECK',
+  defaultValue: false,
+);
+
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -42,16 +50,18 @@ Future<void> main() async {
         // does not advertise or maintain an offline work queue.
         persistenceEnabled: false,
       );
-      await FirebaseAppCheck.instance.activate(
-        providerAndroid:
-            kDebugMode
-                ? const AndroidDebugProvider()
-                : const AndroidPlayIntegrityProvider(),
-        providerApple:
-            kDebugMode
-                ? const AppleDebugProvider()
-                : const AppleAppAttestWithDeviceCheckFallbackProvider(),
-      );
+      if (_enableAppCheck) {
+        await FirebaseAppCheck.instance.activate(
+          providerAndroid:
+              kDebugMode
+                  ? const AndroidDebugProvider()
+                  : const AndroidPlayIntegrityProvider(),
+          providerApple:
+              kDebugMode
+                  ? const AppleDebugProvider()
+                  : const AppleAppAttestWithDeviceCheckFallbackProvider(),
+        );
+      }
       FlutterError.onError = (details) {
         FlutterError.presentError(details);
         FirebaseCrashlytics.instance.recordFlutterFatalError(details);
@@ -65,7 +75,15 @@ Future<void> main() async {
       };
     }
     services = AppServices.firebase();
-    if (!kIsWeb) await services.notifications?.initialize();
+    if (!kIsWeb) {
+      try {
+        await services.notifications?.initialize();
+      } catch (error) {
+        // Push notifications are optional and must never block authentication
+        // on devices without compatible Google services.
+        debugPrint('No se pudieron inicializar las notificaciones: $error');
+      }
+    }
   } catch (error, stack) {
     startupError = error;
     startupStack = stack;

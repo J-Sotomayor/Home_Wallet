@@ -836,7 +836,7 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
     final date = await showDatePicker(
       context: context,
       initialDate: _occurredAt,
-      firstDate: DateTime(2000),
+      firstDate: DateTime(1),
       lastDate: DateTime.now().add(const Duration(days: 366)),
     );
     if (date != null && mounted) setState(() => _occurredAt = date);

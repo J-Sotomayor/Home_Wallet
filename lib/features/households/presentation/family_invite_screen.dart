@@ -16,10 +16,12 @@ class FamilyInviteScreen extends StatefulWidget {
   const FamilyInviteScreen({
     super.key,
     required this.householdId,
+    required this.householdKind,
     required this.repository,
   });
 
   final String householdId;
+  final HouseholdKind householdKind;
   final HouseholdRepository repository;
 
   @override
@@ -29,6 +31,9 @@ class FamilyInviteScreen extends StatefulWidget {
 class _FamilyInviteScreenState extends State<FamilyInviteScreen> {
   InvitationPayload? _invitation;
   String? _error;
+  bool _revoked = false;
+  bool _working = false;
+  HouseholdRole _invitedRole = HouseholdRole.member;
 
   @override
   void initState() {
@@ -54,9 +59,65 @@ class _FamilyInviteScreenState extends State<FamilyInviteScreen> {
               'La invitación vence en 15 minutos. Compártela únicamente con la persona que deseas agregar.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
+            if (widget.householdKind == HouseholdKind.family) ...[
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                'Rol de la persona invitada',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SegmentedButton<HouseholdRole>(
+                segments: const [
+                  ButtonSegment(
+                    value: HouseholdRole.member,
+                    icon: Icon(Icons.edit_outlined),
+                    label: Text('Miembro'),
+                  ),
+                  ButtonSegment(
+                    value: HouseholdRole.junior,
+                    icon: Icon(Icons.visibility_outlined),
+                    label: Text('Lector / Jr.'),
+                  ),
+                ],
+                selected: {_invitedRole},
+                onSelectionChanged:
+                    invitation == null || _working
+                        ? null
+                        : (selection) {
+                          setState(() => _invitedRole = selection.first);
+                          _generate();
+                        },
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              const Text(
+                'El rol queda protegido en la invitación y no puede elegirlo quien la recibe.',
+              ),
+            ],
             const SizedBox(height: AppSpacing.xl),
             if (_error != null)
               _ErrorCard(message: _error!, onRetry: _generate)
+            else if (_revoked)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.link_off_outlined, size: 42),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'La invitación fue revocada y ya no puede utilizarse.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _generate,
+                        icon: const Icon(Icons.qr_code_2),
+                        label: const Text('Generar nueva invitación'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
             else if (invitation == null)
               const Center(child: CircularProgressIndicator())
             else ...[
@@ -100,9 +161,14 @@ class _FamilyInviteScreenState extends State<FamilyInviteScreen> {
               ),
               const SizedBox(height: AppSpacing.sm),
               TextButton.icon(
-                onPressed: _generate,
+                onPressed: _working ? null : _generate,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Generar otro QR'),
+              ),
+              TextButton.icon(
+                onPressed: _working ? null : _revoke,
+                icon: const Icon(Icons.link_off_outlined),
+                label: const Text('Revocar esta invitación'),
               ),
               const SizedBox(height: AppSpacing.lg),
               const _SecurityNotice(),
@@ -114,17 +180,42 @@ class _FamilyInviteScreenState extends State<FamilyInviteScreen> {
   }
 
   Future<void> _generate() async {
+    if (_working) return;
     setState(() {
+      _working = true;
       _invitation = null;
       _error = null;
+      _revoked = false;
     });
     try {
       final invitation = await widget.repository.createInvitation(
         widget.householdId,
+        invitedRole: _invitedRole,
       );
       if (mounted) setState(() => _invitation = invitation);
     } on AppException catch (error) {
       if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _revoke() async {
+    if (_working) return;
+    setState(() => _working = true);
+    try {
+      await widget.repository.revokeInvitation(widget.householdId);
+      if (mounted) {
+        setState(() {
+          _invitation = null;
+          _error = null;
+          _revoked = true;
+        });
+      }
+    } on AppException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _working = false);
     }
   }
 
@@ -289,13 +380,9 @@ class _JoinHouseholdScreenState extends State<JoinHouseholdScreen> {
     });
     await _controller.stop();
     try {
-      final payload = InvitationPayload.decode(rawValue);
-      final requestedRole = await _chooseRole(payload.kind);
-      if (requestedRole == null) return;
       final householdId = await widget.repository.acceptInvitation(
         rawValue,
         widget.user,
-        requestedRole: requestedRole,
       );
       widget.onJoined?.call(householdId);
       if (mounted && Navigator.of(context).canPop()) {
@@ -311,35 +398,6 @@ class _JoinHouseholdScreenState extends State<JoinHouseholdScreen> {
         if (!_manual) await _controller.start();
       }
     }
-  }
-
-  Future<HouseholdRole?> _chooseRole(HouseholdKind kind) async {
-    if (kind != HouseholdKind.family) return HouseholdRole.member;
-    if (!mounted) return null;
-    return showDialog<HouseholdRole>(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (context) => AlertDialog(
-            icon: const Icon(Icons.family_restroom),
-            title: const Text('¿Cómo participarás?'),
-            content: const Text(
-              'El propietario podrá cambiar este permiso después. Un lector (Integrante Jr) puede consultar, pero no agregar, editar ni eliminar datos.',
-            ),
-            actions: [
-              OutlinedButton.icon(
-                onPressed: () => Navigator.pop(context, HouseholdRole.junior),
-                icon: const Icon(Icons.visibility_outlined),
-                label: const Text('Lector / Integrante Jr'),
-              ),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(context, HouseholdRole.member),
-                icon: const Icon(Icons.edit_outlined),
-                label: const Text('Miembro'),
-              ),
-            ],
-          ),
-    );
   }
 }
 

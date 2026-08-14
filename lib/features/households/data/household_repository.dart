@@ -20,12 +20,12 @@ abstract interface class HouseholdRepository {
     AuthUser user, {
     HouseholdKind kind = HouseholdKind.family,
   });
-  Future<InvitationPayload> createInvitation(String householdId);
-  Future<String> acceptInvitation(
-    String rawPayload,
-    AuthUser user, {
-    HouseholdRole requestedRole = HouseholdRole.member,
+  Future<InvitationPayload> createInvitation(
+    String householdId, {
+    HouseholdRole invitedRole = HouseholdRole.member,
   });
+  Future<void> revokeInvitation(String householdId);
+  Future<String> acceptInvitation(String rawPayload, AuthUser user);
   Future<void> updateMemberRole({
     required String householdId,
     required String memberId,
@@ -78,7 +78,38 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       // No avanzamos al tutorial con una escritura local que Firebase todavía
       // puede rechazar. Solo un valor confirmado por el servidor abre el hogar.
       .where((snapshot) => !snapshot.metadata.hasPendingWrites)
-      .map((snapshot) => snapshot.data()?['activeHouseholdId'] as String?);
+      .asyncMap((snapshot) async {
+        final data = snapshot.data();
+        final active = data?['activeHouseholdId'] as String?;
+        if (active != null &&
+            active.isNotEmpty &&
+            await _hasActiveMembership(active, uid)) {
+          return active;
+        }
+        final householdIds =
+            (data?['householdIds'] as List<dynamic>? ?? const [])
+                .whereType<String>()
+                .toSet();
+        String? recovered;
+        for (final householdId in householdIds) {
+          if (await _hasActiveMembership(householdId, uid)) {
+            recovered = householdId;
+            break;
+          }
+        }
+        if (recovered != active) {
+          try {
+            await _firestore.collection('users').doc(uid).update({
+              'activeHouseholdId': recovered,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          } on FirebaseException {
+            // La membresía es la autoridad; persistir la preferencia puede
+            // reintentarse en el siguiente evento sin bloquear la aplicación.
+          }
+        }
+        return recovered;
+      });
 
   @override
   Stream<Household> watchHousehold(String householdId, String uid) => _firestore
@@ -161,45 +192,51 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
               .toList();
       final households = await Future.wait(
         householdIds.map((householdId) async {
-          final householdReference = _firestore
-              .collection('households')
-              .doc(householdId);
-          final results = await Future.wait([
-            householdReference.get(),
-            householdReference.collection('members').doc(uid).get(),
-          ]);
-          final household = results[0];
-          final member = results[1];
-          if (!household.exists ||
-              !member.exists ||
-              member.data()?['status'] != 'active') {
+          try {
+            final householdReference = _firestore
+                .collection('households')
+                .doc(householdId);
+            final results = await Future.wait([
+              householdReference.get(),
+              householdReference.collection('members').doc(uid).get(),
+            ]);
+            final household = results[0];
+            final member = results[1];
+            if (!household.exists ||
+                !member.exists ||
+                member.data()?['status'] != 'active') {
+              return null;
+            }
+            final data = household.data()!;
+            final key = await _keyStore.readHouseholdKey(householdId);
+            var name = 'Espacio protegido';
+            var kind = HouseholdKind.parse(data['kind']);
+            if (key != null && data['privatePayload'] is Map) {
+              try {
+                final clear = await _crypto.decryptJson(
+                  payload: _asMap(data['privatePayload']),
+                  keyBytes: key,
+                  context: 'households/$householdId',
+                );
+                name = clear['name'] as String? ?? 'Mi espacio';
+                kind = HouseholdKind.parse(data['kind'] ?? clear['kind']);
+              } on Object {
+                name = 'Espacio protegido';
+              }
+            }
+            return Household(
+              id: householdId,
+              name: name,
+              memberCount: (data['memberCount'] as num?)?.toInt() ?? 1,
+              role: member.data()?['role'] as String? ?? 'member',
+              kind: kind,
+              hasLocalKey: key != null,
+            );
+          } on FirebaseException {
+            // Un índice heredado puede conservar un ID después de perder la
+            // membresía. Se omite sin impedir el acceso a los demás espacios.
             return null;
           }
-          final data = household.data()!;
-          final key = await _keyStore.readHouseholdKey(householdId);
-          var name = 'Espacio protegido';
-          var kind = HouseholdKind.parse(data['kind']);
-          if (key != null && data['privatePayload'] is Map) {
-            try {
-              final clear = await _crypto.decryptJson(
-                payload: _asMap(data['privatePayload']),
-                keyBytes: key,
-                context: 'households/$householdId',
-              );
-              name = clear['name'] as String? ?? 'Mi espacio';
-              kind = HouseholdKind.parse(data['kind'] ?? clear['kind']);
-            } on Object {
-              name = 'Espacio protegido';
-            }
-          }
-          return Household(
-            id: householdId,
-            name: name,
-            memberCount: (data['memberCount'] as num?)?.toInt() ?? 1,
-            role: member.data()?['role'] as String? ?? 'member',
-            kind: kind,
-            hasLocalKey: key != null,
-          );
         }),
       );
       final available =
@@ -311,12 +348,16 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
   }
 
   @override
-  Future<InvitationPayload> createInvitation(String householdId) async {
+  Future<InvitationPayload> createInvitation(
+    String householdId, {
+    HouseholdRole invitedRole = HouseholdRole.member,
+  }) async {
     try {
       await _refreshVerifiedSession();
       final key = await _requireKey(householdId);
       final result = await _functions.httpsCallable('createInvitation').call({
         'householdId': householdId,
+        'role': invitedRole == HouseholdRole.junior ? 'junior' : 'member',
       });
       final data = _asMap(result.data);
       final invitationId = data['invitationId'] as String?;
@@ -342,11 +383,19 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
   }
 
   @override
-  Future<String> acceptInvitation(
-    String rawPayload,
-    AuthUser user, {
-    HouseholdRole requestedRole = HouseholdRole.member,
-  }) async {
+  Future<void> revokeInvitation(String householdId) async {
+    try {
+      await _refreshVerifiedSession();
+      await _functions.httpsCallable('revokeInvitation').call({
+        'householdId': householdId,
+      });
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
+  Future<String> acceptInvitation(String rawPayload, AuthUser user) async {
     try {
       final payload = InvitationPayload.decode(rawPayload);
       if (payload.isExpired) {
@@ -355,15 +404,9 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
         );
       }
       await _refreshVerifiedSession();
-      final effectiveRole =
-          payload.kind == HouseholdKind.family &&
-                  requestedRole == HouseholdRole.junior
-              ? HouseholdRole.junior
-              : HouseholdRole.member;
       final result = await _functions.httpsCallable('acceptInvitation').call({
         'invitationId': payload.invitationId,
         'token': payload.token,
-        'requestedRole': effectiveRole.name,
       });
       final resultData = _asMap(result.data);
       final householdId = resultData['householdId'] as String?;
@@ -483,6 +526,23 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
   @override
   Future<bool> hasKey(String householdId) async =>
       await _keyStore.readHouseholdKey(householdId) != null;
+
+  Future<bool> _hasActiveMembership(String householdId, String uid) async {
+    try {
+      final householdReference = _firestore
+          .collection('households')
+          .doc(householdId);
+      final results = await Future.wait([
+        householdReference.get(),
+        householdReference.collection('members').doc(uid).get(),
+      ]);
+      return results[0].exists &&
+          results[1].exists &&
+          results[1].data()?['status'] == 'active';
+    } on FirebaseException {
+      return false;
+    }
+  }
 
   Future<List<int>> _requireKey(String householdId) async {
     final key = await _keyStore.readHouseholdKey(householdId);
