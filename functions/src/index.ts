@@ -10,6 +10,7 @@ import {getAuth} from "firebase-admin/auth";
 import {getMessaging} from "firebase-admin/messaging";
 import {
   DocumentReference,
+  FieldPath,
   FieldValue,
   Timestamp,
   WriteResult,
@@ -294,6 +295,99 @@ async function notifyHousehold(
   await sendPushToUsers(recipients, title, body, {householdId, type});
 }
 
+type NotificationCopy = {title: string; body: string};
+
+async function householdKind(householdId: string): Promise<string> {
+  const household = await db.collection("households").doc(householdId).get();
+  const kind = household.data()?.kind;
+  return ["individual", "couple", "family", "group"].includes(kind) ?
+    kind : "family";
+}
+
+async function actorName(uid: string | null): Promise<string> {
+  if (!uid) return "Un integrante";
+  const user = await db.collection("users").doc(uid).get();
+  const name = user.data()?.displayName;
+  return typeof name === "string" && name.trim().length > 0 ?
+    name.trim().split(/\s+/)[0] : "Un integrante";
+}
+
+function transactionCopy(
+  kind: string,
+  type: unknown,
+  name: string,
+): NotificationCopy {
+  const action = type === "income" ? "un ingreso" :
+    type === "saving" ? "un ahorro o aporte a una meta" : "un gasto";
+  if (kind === "couple") {
+    return {
+      title: type === "expense" ? "Nuevo gasto en pareja" :
+        type === "income" ? "Nuevo ingreso en pareja" : "Nuevo ahorro en pareja",
+      body: `${name} registró ${action}. Revisa cómo quedó el espacio de ambos.`,
+    };
+  }
+  if (kind === "group") {
+    return {
+      title: "Actividad nueva en el grupo",
+      body: `${name} registró ${action}. Revisa el movimiento del grupo.`,
+    };
+  }
+  if (kind === "family") {
+    return {
+      title: "Movimiento nuevo en la familia",
+      body: `${name} registró ${action}. Revisa el resumen familiar.`,
+    };
+  }
+  return {
+    title: "Movimiento personal registrado",
+    body: `Se registró ${action} en tu espacio Individual.`,
+  };
+}
+
+function collaborativeCopy(
+  kind: string,
+  name: string,
+  activity: "plan" | "split" | "recurring",
+  planKind?: unknown,
+): NotificationCopy {
+  const noun = activity === "split" ? "una división de gasto" :
+    activity === "recurring" ? "un movimiento programado" :
+      planKind === "goal" ? "una meta de ahorro" : "un presupuesto";
+  const context = kind === "couple" ? "de la pareja" :
+    kind === "group" ? "del grupo" : "de la familia";
+  return {
+    title: activity === "split" ? `Nuevo gasto dividido ${context}` :
+      activity === "recurring" ? `Nueva programación ${context}` :
+        `Nuevo plan ${context}`,
+    body: `${name} creó ${noun}. Ábrelo para revisar los detalles.`,
+  };
+}
+
+function reviewReminderCopy(kind: string): NotificationCopy {
+  if (kind === "individual") {
+    return {
+      title: "Tu revisión financiera está pendiente",
+      body: "Reserva un minuto para registrar o revisar tus movimientos personales.",
+    };
+  }
+  if (kind === "couple") {
+    return {
+      title: "Momento de revisar en pareja",
+      body: "Comprueben juntos los movimientos, gastos divididos y metas pendientes.",
+    };
+  }
+  if (kind === "group") {
+    return {
+      title: "Revisión pendiente del grupo",
+      body: "Confirmen los gastos divididos y movimientos recientes del grupo.",
+    };
+  }
+  return {
+    title: "Revisión del espacio familiar",
+    body: "Revisa movimientos, presupuestos y metas pendientes de la familia.",
+  };
+}
+
 async function claimNotificationWindow(
   key: string,
   intervalMs: number,
@@ -314,15 +408,86 @@ export const notifyNewTransaction = onDocumentCreated(
     const data = event.data?.data();
     if (!data) return;
     if (!await claimNotificationWindow(
-      `transaction-${event.params.householdId}`,
-      60_000,
+      `transaction-${event.params.householdId}-${data.createdBy}-${data.type}`,
+      30_000,
     )) return;
+    const creator = typeof data.createdBy === "string" ? data.createdBy : null;
+    const [kind, name] = await Promise.all([
+      householdKind(event.params.householdId),
+      actorName(creator),
+    ]);
+    const copy = transactionCopy(kind, data.type, name);
     await notifyHousehold(
       event.params.householdId,
-      typeof data.createdBy === "string" ? data.createdBy : null,
-      "Nuevo movimiento en tu espacio",
-      "Revisa la actividad compartida en HomeWallet.",
-      "transaction",
+      creator,
+      copy.title,
+      copy.body,
+      `transaction-${String(data.type ?? "activity")}`,
+    );
+  },
+);
+
+export const notifyNewPlan = onDocumentCreated(
+  "households/{householdId}/plans/{planId}",
+  async (event) => {
+    const data = event.data?.data();
+    const creator = typeof data?.createdBy === "string" ? data.createdBy : null;
+    if (!data || !creator) return;
+    const [kind, name] = await Promise.all([
+      householdKind(event.params.householdId),
+      actorName(creator),
+    ]);
+    if (kind === "individual") return;
+    const copy = collaborativeCopy(kind, name, "plan", data.kind);
+    await notifyHousehold(
+      event.params.householdId,
+      creator,
+      copy.title,
+      copy.body,
+      `plan-${String(data.kind ?? "plan")}`,
+    );
+  },
+);
+
+export const notifyNewSharedExpense = onDocumentCreated(
+  "households/{householdId}/sharedExpenses/{expenseId}",
+  async (event) => {
+    const data = event.data?.data();
+    const creator = typeof data?.createdBy === "string" ? data.createdBy : null;
+    if (!data || !creator) return;
+    const [kind, name] = await Promise.all([
+      householdKind(event.params.householdId),
+      actorName(creator),
+    ]);
+    const copy = collaborativeCopy(kind, name, "split");
+    await notifyHousehold(
+      event.params.householdId,
+      creator,
+      copy.title,
+      copy.body,
+      "shared-expense",
+    );
+  },
+);
+
+export const notifyNewRecurring = onDocumentCreated(
+  "households/{householdId}/recurring/{recurringId}",
+  async (event) => {
+    const data = event.data?.data();
+    const creator = typeof data?.createdBy === "string" ? data.createdBy : null;
+    if (!data || !creator) return;
+    const [kind, name] = await Promise.all([
+      householdKind(event.params.householdId),
+      actorName(creator),
+    ]);
+    if (kind === "individual") return;
+    const copy = collaborativeCopy(kind, name, "recurring");
+    await notifyHousehold(
+      event.params.householdId,
+      creator,
+      copy.title,
+      copy.body,
+      "recurring-created",
     );
   },
 );
@@ -1014,11 +1179,16 @@ export const notifyDueRecurring = onSchedule({
       notifiedAt: FieldValue.serverTimestamp(),
     });
     try {
+      const kind = await householdKind(householdId);
+      const reminderTitle = kind === "couple" ?
+        "Registro pendiente de la pareja" : kind === "family" ?
+          "Registro pendiente de la familia" : kind === "group" ?
+            "Registro pendiente del grupo" :
+            data.confirmBeforePosting === true ?
+              "Registro recurrente pendiente" : "Registro recurrente listo";
       await sendPushToUsers(
         [data.createdBy],
-        data.confirmBeforePosting === true ?
-          "Registro recurrente pendiente" :
-          "Registro recurrente listo",
+        reminderTitle,
         data.confirmBeforePosting === true ?
           "Abre HomeWallet para revisarlo y validarlo." :
           "Se validará automáticamente cuando abras HomeWallet.",
@@ -1029,6 +1199,48 @@ export const notifyDueRecurring = onSchedule({
       logError("Recurring notification failed", {error});
     }
   }
+});
+
+export const notifyReviewReminders = onSchedule({
+  schedule: "0 19 * * 1,4",
+  region: "us-central1",
+  timeZone: "America/Guayaquil",
+  timeoutSeconds: 300,
+}, async () => {
+  let cursor: string | null = null;
+  do {
+    const usersQuery = db.collection("users").orderBy(FieldPath.documentId());
+    const users = await (cursor ? usersQuery.startAfter(cursor) : usersQuery)
+      .limit(100)
+      .get();
+    if (users.empty) break;
+    for (let index = 0; index < users.docs.length; index += 10) {
+      const group = users.docs.slice(index, index + 10);
+      await Promise.all(group.map(async (user) => {
+        const householdId = user.data().activeHouseholdId;
+        if (typeof householdId !== "string" || householdId.length === 0) return;
+        try {
+          const householdReference = db.collection("households").doc(householdId);
+          const [household, member] = await Promise.all([
+            householdReference.get(),
+            householdReference.collection("members").doc(user.id).get(),
+          ]);
+          if (!household.exists || member.data()?.status !== "active") return;
+          const copy = reviewReminderCopy(household.data()?.kind ?? "family");
+          await sendPushToUsers(
+            [user.id],
+            copy.title,
+            copy.body,
+            {householdId, type: "review-reminder"},
+          );
+        } catch (error) {
+          logError("Review reminder failed", {uid: user.id, error});
+        }
+      }));
+    }
+    cursor = users.docs[users.docs.length - 1].id;
+    if (users.size < 100) break;
+  } while (cursor !== null);
 });
 
 function addBusinessDays(value: Date, days: number): Date {

@@ -23,68 +23,95 @@ class HouseholdMembersScreen extends StatefulWidget {
 
 class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
   var _busy = false;
+  var _leaving = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Integrantes y permisos')),
       body: SafeArea(
-        child: StreamBuilder<List<HouseholdMember>>(
-          stream: widget.repository.watchMembers(widget.household.id),
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    'No se pudieron cargar los integrantes.\n${snapshot.error}',
-                    textAlign: TextAlign.center,
+        child:
+            _leaving
+                ? const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 14),
+                      Text('Saliendo del espacio…'),
+                    ],
                   ),
+                )
+                : StreamBuilder<List<HouseholdMember>>(
+                  stream: widget.repository.watchMembers(widget.household.id),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.group_off_outlined, size: 48),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Este espacio ya no está disponible para tu cuenta.',
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 10),
+                              TextButton(
+                                onPressed: () => Navigator.maybePop(context),
+                                child: const Text('Volver a mis espacios'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+                    if (!snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final members =
+                        snapshot.data!..sort((a, b) {
+                          if (a.roleType == HouseholdRole.owner) return -1;
+                          if (b.roleType == HouseholdRole.owner) return 1;
+                          return a.displayName.compareTo(b.displayName);
+                        });
+                    return ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+                      children: [
+                        Card(
+                          child: ListTile(
+                            leading: const Icon(Icons.shield_outlined),
+                            title: Text(
+                              '${widget.household.kind.label} · Permisos',
+                            ),
+                            subtitle: Text(
+                              widget.household.kind == HouseholdKind.family
+                                  ? 'El lector (Integrante Jr) puede ver la información, pero no modificarla.'
+                                  : 'El propietario administra los permisos de participación.',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ...members.map((member) => _memberCard(member)),
+                        if (!widget.household.isOwner) ...[
+                          const SizedBox(height: 22),
+                          OutlinedButton.icon(
+                            onPressed: _busy ? null : _leave,
+                            icon: const Icon(Icons.exit_to_app),
+                            label: const Text('Salir de este espacio'),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Al salir perderás el acceso a los datos cifrados de este espacio.',
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ],
+                    );
+                  },
                 ),
-              );
-            }
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final members =
-                snapshot.data!..sort((a, b) {
-                  if (a.roleType == HouseholdRole.owner) return -1;
-                  if (b.roleType == HouseholdRole.owner) return 1;
-                  return a.displayName.compareTo(b.displayName);
-                });
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
-              children: [
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.shield_outlined),
-                    title: Text('${widget.household.kind.label} · Permisos'),
-                    subtitle: Text(
-                      widget.household.kind == HouseholdKind.family
-                          ? 'El lector (Integrante Jr) puede ver la información, pero no modificarla.'
-                          : 'El propietario administra los permisos de participación.',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                ...members.map((member) => _memberCard(member)),
-                if (!widget.household.isOwner) ...[
-                  const SizedBox(height: 22),
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _leave,
-                    icon: const Icon(Icons.exit_to_app),
-                    label: const Text('Salir de este espacio'),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Al salir perderás el acceso a los datos cifrados de este espacio.',
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ],
-            );
-          },
-        ),
       ),
     );
   }
@@ -234,11 +261,15 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
           ),
     );
     if (confirmed != true || !mounted) return;
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _leaving = true;
+    });
     try {
       await widget.repository.leaveHousehold(widget.household.id);
       if (mounted) Navigator.pop(context);
     } on AppException catch (error) {
+      if (mounted) setState(() => _leaving = false);
       _show(error.message);
     } finally {
       if (mounted) setState(() => _busy = false);

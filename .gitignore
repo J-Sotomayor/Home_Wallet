@@ -59,6 +59,7 @@ gha-creds-*.json
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
+functions/.secret.local
 
 # Local Android configuration and release credentials
 /android/local.properties

@@ -468,6 +468,7 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: _category,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Tipo de gasto',
                 prefixIcon: Icon(Icons.category_outlined),
@@ -601,6 +602,7 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
               value: _participants.contains(_paidByUid) ? _paidByUid : null,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Pagó la cuenta',
                 prefixIcon: Icon(Icons.payments_outlined),
@@ -611,7 +613,11 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
                       .map(
                         (member) => DropdownMenuItem(
                           value: member.uid,
-                          child: Text(member.displayName),
+                          child: Text(
+                            member.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       )
                       .toList(),
@@ -639,7 +645,72 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
                 ),
               ),
             ),
-            if (_splitMode != ExpenseSplitMode.equal) ...[
+            if (_splitMode == ExpenseSplitMode.income) ...[
+              const SizedBox(height: 8),
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.auto_awesome_outlined),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Ingresos tomados automáticamente de Inicio',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      ...widget.members
+                          .where((member) => _participants.contains(member.uid))
+                          .map(
+                            (member) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      member.uid == widget.currentUid
+                                          ? 'Tú · ${member.displayName}'
+                                          : member.displayName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    member.hasMonthlyIncome
+                                        ? _money(member.monthlyIncomeMinor)
+                                        : 'Sin registrar',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color:
+                                          member.hasMonthlyIncome
+                                              ? null
+                                              : Theme.of(
+                                                context,
+                                              ).colorScheme.error,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Cada integrante registra su ingreso neto mensual desde la tarjeta azul de Inicio.',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ] else if (_splitMode != ExpenseSplitMode.equal) ...[
               const SizedBox(height: 8),
               ...widget.members
                   .where((member) => _participants.contains(member.uid))
@@ -652,18 +723,11 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
                           decimal: true,
                         ),
                         decoration: InputDecoration(
-                          labelText:
-                              _splitMode == ExpenseSplitMode.income
-                                  ? 'Ingreso mensual de ${member.displayName}'
-                                  : member.displayName,
+                          labelText: member.displayName,
                           suffixText:
                               _splitMode == ExpenseSplitMode.percentage
                                   ? '%'
                                   : r'USD',
-                          helperText:
-                              _splitMode == ExpenseSplitMode.income
-                                  ? 'Solo se usa para calcular la proporción.'
-                                  : null,
                         ),
                         onChanged: (_) => setState(() {}),
                       ),
@@ -760,9 +824,16 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
     if (_splitMode == ExpenseSplitMode.income) {
       final incomes = <String, int>{};
       for (final id in ids) {
-        final value = _parseMoneyMinor(_shareControllers[id]!.text);
-        if (value == null || value < 0) return const {};
-        incomes[id] = value;
+        final member = widget.members.firstWhere((item) => item.uid == id);
+        if (!member.hasMonthlyIncome) {
+          if (showErrors) {
+            _showError(
+              '${member.displayName} debe registrar su ingreso mensual desde Inicio.',
+            );
+          }
+          return const {};
+        }
+        incomes[id] = member.monthlyIncomeMinor;
       }
       final incomeTotal = incomes.values.fold<int>(
         0,
@@ -810,8 +881,6 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
     if (shares.isEmpty) {
       if (_splitMode == ExpenseSplitMode.percentage) {
         _showError('Completa el porcentaje de cada persona.');
-      } else if (_splitMode == ExpenseSplitMode.income) {
-        _showError('Completa el ingreso mensual de cada persona.');
       } else if (_splitMode == ExpenseSplitMode.custom) {
         _showError('Completa el monto de cada persona.');
       }

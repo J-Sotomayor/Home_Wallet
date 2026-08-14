@@ -326,6 +326,7 @@ class _CategoryFormState extends State<_CategoryForm> {
           const SizedBox(height: 14),
           DropdownButtonFormField<TransactionType>(
             value: _type,
+            isExpanded: true,
             decoration: const InputDecoration(labelText: 'Tipo'),
             items:
                 TransactionType.values

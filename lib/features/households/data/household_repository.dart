@@ -49,6 +49,11 @@ abstract interface class HouseholdRepository {
     required String uid,
     required String displayName,
   });
+  Future<void> updateMemberMonthlyIncome({
+    required String householdId,
+    required String uid,
+    required int monthlyIncomeMinor,
+  });
   Future<bool> ensureKeyAvailable(String householdId);
 }
 
@@ -160,6 +165,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
         for (final document in snapshot.docs) {
           final data = document.data();
           var name = 'Integrante';
+          var monthlyIncomeMinor = 0;
           final encrypted = data['privatePayload'];
           if (encrypted is Map) {
             try {
@@ -173,11 +179,27 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
               name = 'Integrante protegido';
             }
           }
+          final encryptedIncome = data['incomePayload'];
+          if (encryptedIncome is Map) {
+            try {
+              final clearIncome = await _crypto.decryptJson(
+                payload: _asMap(encryptedIncome),
+                keyBytes: key,
+                context:
+                    'households/$householdId/members/${document.id}/income',
+              );
+              monthlyIncomeMinor =
+                  (clearIncome['monthlyIncomeMinor'] as num?)?.toInt() ?? 0;
+            } on Object {
+              monthlyIncomeMinor = 0;
+            }
+          }
           result.add(
             HouseholdMember(
               uid: document.id,
               displayName: name,
               role: data['role'] as String? ?? 'member',
+              monthlyIncomeMinor: monthlyIncomeMinor,
             ),
           );
         }
@@ -511,21 +533,74 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
     required String displayName,
   }) async {
     try {
+      await _updateMemberPrivateData(
+        householdId: householdId,
+        uid: uid,
+        changes: {'displayName': displayName.trim()},
+      );
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
+  Future<void> updateMemberMonthlyIncome({
+    required String householdId,
+    required String uid,
+    required int monthlyIncomeMinor,
+  }) async {
+    if (monthlyIncomeMinor < 0 || monthlyIncomeMinor > 99999999999) {
+      throw const AppException('El ingreso mensual no es válido.');
+    }
+    try {
       final key = await _requireKey(householdId);
       final payload = await _crypto.encryptJson(
-        value: {'displayName': displayName.trim()},
+        value: {'monthlyIncomeMinor': monthlyIncomeMinor},
         keyBytes: key,
-        context: 'households/$householdId/members/$uid',
+        context: 'households/$householdId/members/$uid/income',
       );
       await _firestore
           .collection('households')
           .doc(householdId)
           .collection('members')
           .doc(uid)
-          .set({'privatePayload': payload}, SetOptions(merge: true));
+          .update({'incomePayload': payload});
     } catch (error) {
       throw mapFirebaseError(error);
     }
+  }
+
+  Future<void> _updateMemberPrivateData({
+    required String householdId,
+    required String uid,
+    required Map<String, dynamic> changes,
+  }) async {
+    final key = await _requireKey(householdId);
+    final reference = _firestore
+        .collection('households')
+        .doc(householdId)
+        .collection('members')
+        .doc(uid);
+    final snapshot = await reference.get();
+    if (!snapshot.exists || snapshot.data()?['status'] != 'active') {
+      throw const AppException('Ya no perteneces a este espacio.');
+    }
+    final encrypted = snapshot.data()?['privatePayload'];
+    final clear =
+        encrypted is Map
+            ? await _crypto.decryptJson(
+              payload: _asMap(encrypted),
+              keyBytes: key,
+              context: 'households/$householdId/members/$uid',
+            )
+            : <String, dynamic>{'displayName': 'Integrante'};
+    clear.addAll(changes);
+    final payload = await _crypto.encryptJson(
+      value: clear,
+      keyBytes: key,
+      context: 'households/$householdId/members/$uid',
+    );
+    await reference.update({'privatePayload': payload});
   }
 
   @override

@@ -13,6 +13,7 @@ import '../../../app/widgets/app_page_header.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../about/presentation/about_homewallet_screen.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../households/data/household_repository.dart';
 import '../../households/domain/household_models.dart';
 import '../../households/presentation/family_invite_screen.dart';
 import '../../households/presentation/household_members_screen.dart';
@@ -494,9 +495,13 @@ class _DashboardTab extends StatelessWidget {
                                   onOpenProfile: onOpenProfile,
                                 ),
                                 const SizedBox(height: 18),
-                                _AvailableBalanceCard(
+                                _AvailableBalanceWithMembers(
                                   balances: balances,
                                   monthlyTransactions: monthlyTransactions,
+                                  householdId: householdId,
+                                  user: user,
+                                  repository: services.households,
+                                  canEditIncome: household.canContribute,
                                 ),
                                 if (balances.uncoveredExpenses > 0) ...[
                                   const SizedBox(height: 12),
@@ -872,14 +877,148 @@ class _DashboardHeader extends StatelessWidget {
   }
 }
 
-class _AvailableBalanceCard extends StatelessWidget {
-  const _AvailableBalanceCard({
+class _AvailableBalanceWithMembers extends StatelessWidget {
+  const _AvailableBalanceWithMembers({
     required this.balances,
     required this.monthlyTransactions,
+    required this.householdId,
+    required this.user,
+    required this.repository,
+    required this.canEditIncome,
   });
 
   final FinanceBalances balances;
   final List<FinanceTransaction> monthlyTransactions;
+  final String householdId;
+  final AuthUser user;
+  final HouseholdRepository repository;
+  final bool canEditIncome;
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<List<HouseholdMember>>(
+    stream: repository.watchMembers(householdId),
+    builder:
+        (context, snapshot) => _AvailableBalanceCard(
+          balances: balances,
+          monthlyTransactions: monthlyTransactions,
+          members: snapshot.data ?? const <HouseholdMember>[],
+          currentUid: user.uid,
+          onEditIncome:
+              snapshot.hasData && canEditIncome
+                  ? () => _editMonthlyIncome(context, snapshot.data!)
+                  : null,
+        ),
+  );
+
+  Future<void> _editMonthlyIncome(
+    BuildContext context,
+    List<HouseholdMember> members,
+  ) async {
+    HouseholdMember? ownMember;
+    for (final member in members) {
+      if (member.uid == user.uid) {
+        ownMember = member;
+        break;
+      }
+    }
+    if (ownMember == null) return;
+    final controller = TextEditingController(
+      text:
+          ownMember.hasMonthlyIncome
+              ? (ownMember.monthlyIncomeMinor / 100).toStringAsFixed(2)
+              : '',
+    );
+    final value = await showDialog<int>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Ingresa tu sueldo o ingreso mensual'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Escribe el valor neto que realmente recibes al mes. Si tienes varias fuentes, registra su total mensual.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  key: const Key('monthly_income_input'),
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Ingreso neto mensual',
+                    prefixText: r'$ ',
+                    helperText:
+                        'Se cifra y lo verán los integrantes del espacio.',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final amount = _parseMoneyMinor(controller.text);
+                  if (amount == null || amount <= 0) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Ingresa un valor mensual mayor que cero.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.pop(dialogContext, amount);
+                },
+                child: const Text('Guardar'),
+              ),
+            ],
+          ),
+    );
+    controller.dispose();
+    if (value == null || !context.mounted) return;
+    try {
+      await repository.updateMemberMonthlyIncome(
+        householdId: householdId,
+        uid: user.uid,
+        monthlyIncomeMinor: value,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ingreso mensual actualizado.')),
+        );
+      }
+    } on AppException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+}
+
+class _AvailableBalanceCard extends StatelessWidget {
+  const _AvailableBalanceCard({
+    required this.balances,
+    required this.monthlyTransactions,
+    required this.members,
+    required this.currentUid,
+    required this.onEditIncome,
+  });
+
+  final FinanceBalances balances;
+  final List<FinanceTransaction> monthlyTransactions;
+  final List<HouseholdMember> members;
+  final String currentUid;
+  final VoidCallback? onEditIncome;
 
   int _monthly(TransactionType type) => monthlyTransactions
       .where((item) => item.type == type)
@@ -943,6 +1082,12 @@ class _AvailableBalanceCard extends StatelessWidget {
                     ? 'Todavía no has separado dinero para ahorros o metas.'
                     : '${_money(reserved)} están protegidos en ahorros y metas.',
                 style: const TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 14),
+              _MonthlyIncomePanel(
+                members: members,
+                currentUid: currentUid,
+                onEdit: onEditIncome,
               ),
               const SizedBox(height: 18),
               Container(
@@ -1049,6 +1194,91 @@ class _AvailableBalanceCard extends StatelessWidget {
           ),
     );
   }
+}
+
+class _MonthlyIncomePanel extends StatelessWidget {
+  const _MonthlyIncomePanel({
+    required this.members,
+    required this.currentUid,
+    required this.onEdit,
+  });
+
+  final List<HouseholdMember> members;
+  final String currentUid;
+  final VoidCallback? onEdit;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(13),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .11),
+      borderRadius: AppShapes.largeRadius,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.payments_outlined,
+              color: Colors.white70,
+              size: 19,
+            ),
+            const SizedBox(width: 7),
+            const Expanded(
+              child: Text(
+                'Ingresos netos mensuales',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: onEdit,
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              child: const Text('Mi ingreso'),
+            ),
+          ],
+        ),
+        if (members.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: LinearProgressIndicator(),
+          )
+        else
+          ...members.map(
+            (member) => Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      member.uid == currentUid
+                          ? 'Tú · ${member.displayName}'
+                          : member.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    member.hasMonthlyIncome
+                        ? _money(member.monthlyIncomeMinor)
+                        : 'Pendiente',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 class _BalanceBreakdownRow extends StatelessWidget {
@@ -1828,6 +2058,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                               children: [
                                 DropdownButtonFormField<String?>(
                                   value: _category,
+                                  isExpanded: true,
                                   decoration: const InputDecoration(
                                     labelText: 'Categoría',
                                   ),
@@ -1851,6 +2082,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                                 if (widget.isCollaborative) ...[
                                   DropdownButtonFormField<String?>(
                                     value: _createdBy,
+                                    isExpanded: true,
                                     decoration: const InputDecoration(
                                       labelText: 'Integrante',
                                     ),
@@ -1862,7 +2094,11 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                                       ...members.map(
                                         (member) => DropdownMenuItem<String?>(
                                           value: member.uid,
-                                          child: Text(member.displayName),
+                                          child: Text(
+                                            member.displayName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
                                         ),
                                       ),
                                     ],
@@ -3637,7 +3873,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 20),
               Text(
-                'HomeWallet 1.0.6 · Firebase Blaze',
+                'HomeWallet 1.0.7 · Firebase Blaze',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -4169,6 +4405,7 @@ class _TransactionFormState extends State<_TransactionForm> {
             : _fundingSource.name;
     return DropdownButtonFormField<String>(
       value: selectedValue,
+      isExpanded: true,
       decoration: const InputDecoration(
         labelText: '¿De dónde salió el dinero?',
         helperText: 'El gasto se descontará únicamente de este saldo.',
@@ -4238,6 +4475,7 @@ class _TransactionFormState extends State<_TransactionForm> {
     return DropdownButtonFormField<String?>(
       key: const Key('transaction_goal'),
       value: _linkedPlanId,
+      isExpanded: true,
       decoration: InputDecoration(
         labelText:
             _type == TransactionType.income
@@ -5106,6 +5344,7 @@ class _PlanFormState extends State<_PlanForm> {
               if (_kind == FinancePlanKind.budget) ...[
                 DropdownButtonFormField<String>(
                   value: _category,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Categoría del presupuesto',
                     helperText:
@@ -5126,6 +5365,7 @@ class _PlanFormState extends State<_PlanForm> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<double>(
                   value: _alertThreshold,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Avisarme al llegar a',
                   ),

@@ -63,4 +63,22 @@ void main() {
     expect(fullCouple.canInvite, isFalse);
     expect(fullCoupleMember.canInvite, isFalse);
   });
+
+  test('a member exposes the encrypted monthly income when configured', () {
+    const pending = HouseholdMember(
+      uid: 'one',
+      displayName: 'Persona uno',
+      role: 'member',
+    );
+    const configured = HouseholdMember(
+      uid: 'two',
+      displayName: 'Persona dos',
+      role: 'member',
+      monthlyIncomeMinor: 120000,
+    );
+
+    expect(pending.hasMonthlyIncome, isFalse);
+    expect(configured.hasMonthlyIncome, isTrue);
+    expect(configured.monthlyIncomeMinor, 120000);
+  });
 }

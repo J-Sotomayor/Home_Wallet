@@ -248,3 +248,37 @@ test("key recovery backups cannot be read or written directly", async () => {
   await assertFails(getDoc(backup));
   await assertFails(setDoc(backup, cipher));
 });
+
+test("members update only their own encrypted profile and contributors set income", async () => {
+  await seedSpace({
+    householdId: "income-space",
+    kind: "family",
+    members: [
+      {uid: "owner", role: "owner"},
+      {uid: "partner", role: "member"},
+      {uid: "junior", role: "junior"},
+    ],
+  });
+  const db = userDb("partner");
+  await assertSucceeds(
+    updateDoc(doc(db, "households", "income-space", "members", "partner"), {
+      privatePayload: {...cipher, ct: "updated-encrypted-profile"},
+    }),
+  );
+  await assertSucceeds(
+    updateDoc(doc(db, "households", "income-space", "members", "partner"), {
+      incomePayload: {...cipher, ct: "encrypted-monthly-income"},
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(db, "households", "income-space", "members", "owner"), {
+      privatePayload: {...cipher, ct: "unauthorized-update"},
+    }),
+  );
+  await assertFails(
+    updateDoc(
+      doc(userDb("junior"), "households", "income-space", "members", "junior"),
+      {incomePayload: {...cipher, ct: "junior-income-update"}},
+    ),
+  );
+});

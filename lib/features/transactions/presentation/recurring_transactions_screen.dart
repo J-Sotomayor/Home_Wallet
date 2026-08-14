@@ -614,6 +614,7 @@ class _RecurringFormState extends State<_RecurringForm> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: _category,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'Categoría',
                 prefixIcon: Icon(Icons.category_outlined),

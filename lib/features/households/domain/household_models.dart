@@ -77,11 +77,14 @@ class HouseholdMember {
     required this.uid,
     required this.displayName,
     required this.role,
+    this.monthlyIncomeMinor = 0,
   });
 
   final String uid;
   final String displayName;
   final String role;
+  final int monthlyIncomeMinor;
 
   HouseholdRole get roleType => HouseholdRole.parse(role);
+  bool get hasMonthlyIncome => monthlyIncomeMinor > 0;
 }

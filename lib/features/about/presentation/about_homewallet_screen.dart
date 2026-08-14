@@ -64,7 +64,7 @@ class AboutHomeWalletScreen extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.xl),
           Text(
-            'Versión 1.0.0',
+            'Versión 1.0.7',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),
