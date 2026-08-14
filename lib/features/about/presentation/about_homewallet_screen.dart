@@ -19,7 +19,7 @@ class AboutHomeWalletScreen extends StatelessWidget {
           const Center(child: HomeWalletLogo(width: 300, height: 90)),
           const SizedBox(height: AppSpacing.xl),
           Text(
-            'Un hogar organizado también se construye con decisiones financieras claras.',
+            'Un espacio organizado también se construye con decisiones financieras claras.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.titleLarge,
           ),
@@ -52,7 +52,7 @@ class AboutHomeWalletScreen extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.verified_user_outlined),
             title: Text('Privacidad desde el diseño'),
-            subtitle: Text('Tu información financiera pertenece a tu hogar.'),
+            subtitle: Text('Tu información financiera pertenece a tu espacio.'),
           ),
           const ListTile(
             contentPadding: EdgeInsets.zero,

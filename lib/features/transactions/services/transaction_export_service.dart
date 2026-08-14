@@ -295,7 +295,7 @@ class TransactionExportService {
       title: 'Estado de movimientos HomeWallet',
       author: 'HomeWallet',
       creator: 'HomeWallet',
-      subject: 'Movimientos financieros del hogar',
+      subject: 'Movimientos del espacio financiero',
       theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
     );
 

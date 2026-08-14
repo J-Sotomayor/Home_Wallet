@@ -60,9 +60,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   static const _pages = <_WelcomePageData>[
     _WelcomePageData(
       icon: Icons.family_restroom,
-      title: 'Toma el control en familia',
+      title: 'Toma el control de tu espacio',
       description:
-          'Organiza ingresos, gastos y pagos del hogar desde un solo lugar.',
+          'Organiza ingresos, gastos y pagos de tu espacio desde un solo lugar.',
       accent: AppColors.blushPinkDark,
     ),
     _WelcomePageData(
@@ -76,7 +76,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       icon: Icons.shield_outlined,
       title: 'Seguro y confiable',
       description:
-          'La información sensible del hogar se guarda cifrada y con permisos por integrante.',
+          'La información sensible del espacio se guarda cifrada y con permisos por integrante.',
       accent: Color(0xFF047857),
     ),
   ];

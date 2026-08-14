@@ -5,6 +5,7 @@ import '../../../core/errors/app_exception.dart';
 import '../../households/data/household_repository.dart';
 import '../../households/domain/household_models.dart';
 import '../data/finance_repository.dart';
+import '../domain/expense_split.dart';
 import '../domain/finance_models.dart';
 
 class SharedDebtsScreen extends StatefulWidget {
@@ -651,11 +652,18 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
                           decimal: true,
                         ),
                         decoration: InputDecoration(
-                          labelText: member.displayName,
+                          labelText:
+                              _splitMode == ExpenseSplitMode.income
+                                  ? 'Ingreso mensual de ${member.displayName}'
+                                  : member.displayName,
                           suffixText:
                               _splitMode == ExpenseSplitMode.percentage
                                   ? '%'
                                   : r'USD',
+                          helperText:
+                              _splitMode == ExpenseSplitMode.income
+                                  ? 'Solo se usa para calcular la proporción.'
+                                  : null,
                         ),
                         onChanged: (_) => setState(() {}),
                       ),
@@ -749,6 +757,25 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
       }
       return result;
     }
+    if (_splitMode == ExpenseSplitMode.income) {
+      final incomes = <String, int>{};
+      for (final id in ids) {
+        final value = _parseMoneyMinor(_shareControllers[id]!.text);
+        if (value == null || value < 0) return const {};
+        incomes[id] = value;
+      }
+      final incomeTotal = incomes.values.fold<int>(
+        0,
+        (sum, value) => sum + value,
+      );
+      if (incomeTotal <= 0) {
+        if (showErrors) {
+          _showError('Los ingresos deben sumar un valor mayor que cero.');
+        }
+        return const {};
+      }
+      return calculateProportionalShares(totalMinor: total, weights: incomes);
+    }
     final result = <String, int>{};
     for (final id in ids) {
       final value = _parseMoneyMinor(_shareControllers[id]!.text);
@@ -783,6 +810,8 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
     if (shares.isEmpty) {
       if (_splitMode == ExpenseSplitMode.percentage) {
         _showError('Completa el porcentaje de cada persona.');
+      } else if (_splitMode == ExpenseSplitMode.income) {
+        _showError('Completa el ingreso mensual de cada persona.');
       } else if (_splitMode == ExpenseSplitMode.custom) {
         _showError('Completa el monto de cada persona.');
       }
@@ -906,6 +935,8 @@ class _SplitPreview extends StatelessWidget {
 String _splitModeDescription(ExpenseSplitMode mode) => switch (mode) {
   ExpenseSplitMode.equal => 'El total se reparte por igual automáticamente.',
   ExpenseSplitMode.percentage => 'Define qué porcentaje paga cada persona.',
+  ExpenseSplitMode.income =>
+    'Calcula una contribución justa según el ingreso mensual de cada persona.',
   ExpenseSplitMode.custom => 'Escribe el valor exacto de cada persona.',
 };
 

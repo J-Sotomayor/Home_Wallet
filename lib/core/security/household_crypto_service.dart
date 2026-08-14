@@ -58,7 +58,7 @@ class HouseholdCryptoService {
 
   void _validateKey(List<int> keyBytes) {
     if (keyBytes.length != 32) {
-      throw const FormatException('La clave del hogar no es válida.');
+      throw const FormatException('La clave del espacio no es válida.');
     }
   }
 }

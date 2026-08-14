@@ -164,7 +164,7 @@ class _CategorySetupScreenState extends State<CategorySetupScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                       : const Icon(Icons.arrow_forward),
-              label: const Text('Continuar al hogar'),
+              label: const Text('Continuar al espacio'),
             ),
           ],
         ),
@@ -189,7 +189,7 @@ class _CategorySetupScreenState extends State<CategorySetupScreen> {
 }
 
 String _typeLabel(TransactionType type) => switch (type) {
-  TransactionType.expense => 'Gastos del hogar',
+  TransactionType.expense => 'Gastos del espacio',
   TransactionType.income => 'Ingresos',
   TransactionType.saving => 'Ahorros',
 };

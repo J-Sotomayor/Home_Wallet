@@ -5,40 +5,43 @@
 <h1 align="center">HomeWallet</h1>
 
 <p align="center">
-  Finanzas colaborativas, claras y seguras para hogares, parejas y grupos.
+  Finanzas personales y colaborativas, claras y seguras.
 </p>
 
 <p align="center">
   <img alt="Flutter 3.29.2" src="https://img.shields.io/badge/Flutter-3.29.2-02569B?logo=flutter&logoColor=white">
   <img alt="Dart 3.7.2" src="https://img.shields.io/badge/Dart-3.7.2-0175C2?logo=dart&logoColor=white">
   <img alt="Firebase" src="https://img.shields.io/badge/Firebase-Backend-FFCA28?logo=firebase&logoColor=black">
-  <img alt="Versión 1.0.0" src="https://img.shields.io/badge/versi%C3%B3n-1.0.0-blue">
+  <img alt="Versión 1.0.2" src="https://img.shields.io/badge/versi%C3%B3n-1.0.2-blue">
 </p>
 
 ## Descripción
 
-HomeWallet es una aplicación multiplataforma desarrollada con Flutter para administrar finanzas personales y compartidas. Permite que los integrantes de un hogar registren y consulten movimientos en tiempo real, organicen presupuestos y metas, importen estados de cuenta y mantengan la información financiera cifrada antes de enviarla a Firebase.
+HomeWallet es una aplicación Android desarrollada con Flutter para administrar finanzas personales y compartidas. Cada persona puede conservar un espacio Individual privado y participar además en espacios Pareja, Familia o Grupo, sin mezclar automáticamente sus movimientos. La información financiera se cifra en el dispositivo antes de enviarse a Firebase.
 
 ## Funcionalidades principales
 
 - Registro e inicio de sesión con correo o Google, verificación de correo, recuperación de contraseña y gestión del perfil.
 - Sesión persistente protegida con biometría o la credencial segura del dispositivo.
-- Creación de hogares para familias, parejas o grupos, con roles y administración de integrantes.
+- Espacios Individual, Pareja, Familia y Grupo, con cambio seguro entre espacios y datos separados.
+- Roles Propietario, Moderador, Miembro y Lector/Integrante Jr., con permisos aplicados por backend.
 - Invitaciones mediante QR o código manual, con token de un solo uso y vencimiento automático.
 - Registro de ingresos, gastos y ahorros, con categorías, filtros y saldos consolidados.
-- Presupuestos, metas financieras, movimientos recurrentes y deudas compartidas.
-- Importación local de estados de cuenta en CSV, XLS, XLSX y PDF compatible.
+- Presupuestos y metas editables, movimientos recurrentes y deudas compartidas con reparto igualitario, porcentual, proporcional por ingresos o personalizado.
+- Importación local de estados de cuenta en CSV, XLS, XLSX y PDF compatible, con selección y detección de duplicados mediante SHA-256.
 - Exportación de reportes profesionales en Excel, PDF y CSV.
-- Alertas inteligentes y notificaciones push para la actividad del hogar.
-- Tema claro, oscuro o del sistema y una identidad visual adaptada a Android e iOS.
+- Alertas inteligentes y notificaciones push para la actividad del espacio.
+- Comparación de ingresos y gastos con el mes anterior.
+- Tema claro, oscuro o del sistema e identidad visual adaptada a Android.
+- Requiere conexión para sincronizar y escribir; no ofrece un modo de trabajo offline.
 
 ## Seguridad y privacidad
 
 - Cifrado AES-256-GCM en el dispositivo para la información financiera compartida.
-- Claves por hogar almacenadas con Android Keystore o iOS Keychain.
+- Claves por espacio almacenadas con Android Keystore.
 - Reglas de Firestore basadas en membresía, rol y correo verificado.
 - Invitaciones protegidas con tokens aleatorios de 256 bits, hash SHA-256, expiración y límites de uso.
-- Firebase App Check preparado para Play Integrity y App Attest/DeviceCheck.
+- Firebase App Check preparado para Play Integrity.
 - Fotos de perfil protegidas por propietario, tipo, nombre y tamaño mediante reglas de Firebase Storage.
 - Procesamiento de archivos bancarios en el dispositivo.
 
@@ -56,7 +59,7 @@ HomeWallet es una aplicación multiplataforma desarrollada con Flutter para admi
 ## Requisitos
 
 - Flutter `3.29.2` o una versión estable compatible con Dart `3.7.2`.
-- Android Studio y Android SDK para Android; Xcode y CocoaPods para iOS.
+- Android Studio y Android SDK.
 - Node.js `22` y npm para Cloud Functions.
 - Firebase CLI y FlutterFire CLI para utilizar un proyecto Firebase propio.
 
@@ -120,7 +123,7 @@ El código está configurado para el proyecto de producción de HomeWallet. Para
    flutterfire configure --project=<firebase-project-id>
    ```
 
-4. En Android, registra las huellas SHA-1 y SHA-256 necesarias para Google Sign-In y App Check. En iOS, completa la configuración del URL scheme y de las capacidades requeridas por Firebase.
+4. Registra las huellas SHA-1 y SHA-256 necesarias para Google Sign-In y App Check en Android.
 5. Revisa las reglas y despliega el backend:
 
    ```bash
@@ -148,17 +151,10 @@ flutter analyze
 flutter test
 ```
 
-Para validar las reglas de Firestore, inicia los emuladores en una terminal:
+Para revisar manualmente reglas y backend sin tocar producción, inicia los emuladores:
 
 ```bash
 firebase emulators:start --only auth,firestore,functions,storage
-```
-
-Y ejecuta las suites de reglas en otra terminal:
-
-```bash
-npm --prefix functions run test:rules
-npm --prefix functions run test:storage-rules
 ```
 
 ## Compilación
@@ -179,12 +175,6 @@ Android App Bundle para Google Play:
 flutter build appbundle --release
 ```
 
-iOS, desde macOS:
-
-```bash
-flutter build ios --release
-```
-
 > El proyecto no usa la firma debug en release. Sin `android/key.properties` y
 > un keystore válido no existe un artefacto apto para publicar. Registra también
 > las huellas release en Firebase/App Check y completa pruebas físicas.
@@ -196,11 +186,11 @@ homewallet/
 ├── android/                 # Proyecto nativo Android
 ├── assets/                  # Marca, iconos, splash y tipografías
 ├── functions/               # Cloud Functions y pruebas de reglas
-├── ios/                     # Proyecto nativo iOS
+├── ios/                     # Base Flutter fuera del alcance de esta entrega
 ├── lib/
 │   ├── app/                 # Tema, servicios y componentes compartidos
 │   ├── core/                # Seguridad, notificaciones y errores
-│   └── features/            # Auth, hogares, finanzas, perfil y legal
+│   └── features/            # Auth, espacios, finanzas, perfil y legal
 ├── test/                    # Pruebas unitarias y de widgets
 └── web/                     # Configuración de Flutter Web
 ```
@@ -211,7 +201,7 @@ homewallet/
 
 ## Estado del proyecto
 
-La versión actual es `1.0.0+1`. El flujo Android ha sido verificado en emulador; iOS está configurado a nivel de proyecto, pero requiere compilación y validación final en macOS y dispositivos físicos. La publicación en tiendas también requiere firma de producción y la activación controlada de App Check.
+La versión actual es `1.0.2+3`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37). iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere firma de producción, pruebas en los dispositivos Android declarados y la activación controlada de App Check.
 
 ## Licencia
 

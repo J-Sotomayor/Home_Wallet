@@ -40,7 +40,7 @@ class _FamilyInviteScreenState extends State<FamilyInviteScreen> {
   Widget build(BuildContext context) {
     final invitation = _invitation;
     return Scaffold(
-      appBar: AppBar(title: const Text('Invitar a tu hogar')),
+      appBar: AppBar(title: const Text('Invitar al espacio')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.xl),
@@ -179,13 +179,13 @@ class _JoinHouseholdScreenState extends State<JoinHouseholdScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Unirse a un hogar')),
+      appBar: AppBar(title: const Text('Unirse a un espacio')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.xl),
           children: [
             Text(
-              _manual ? 'Pega el código seguro' : 'Escanea el QR de la familia',
+              _manual ? 'Pega el código seguro' : 'Escanea el QR del espacio',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -359,7 +359,7 @@ class _SecurityNotice extends StatelessWidget {
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                'El QR contiene la clave secreta que permite descifrar el hogar. No publiques capturas ni lo envíes a personas desconocidas.',
+                'El QR contiene la clave secreta que permite descifrar el espacio. No publiques capturas ni lo envíes a personas desconocidas.',
               ),
             ),
           ],

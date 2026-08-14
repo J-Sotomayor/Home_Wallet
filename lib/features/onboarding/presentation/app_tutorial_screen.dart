@@ -18,7 +18,7 @@ class _AppTutorialScreenState extends State<AppTutorialScreen> {
     _TutorialStep(
       Icons.home_outlined,
       'Tu resumen',
-      'En Inicio verás el dinero disponible, lo apartado para ahorrar y la actividad reciente del hogar.',
+      'En Inicio verás el dinero disponible, lo apartado para ahorrar y la actividad reciente del espacio.',
     ),
     _TutorialStep(
       Icons.receipt_long_outlined,

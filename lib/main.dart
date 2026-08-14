@@ -38,8 +38,9 @@ Future<void> main() async {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     if (!kIsWeb) {
       FirebaseFirestore.instance.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: 100 * 1024 * 1024,
+        // HomeWallet requires a confirmed server connection for writes and
+        // does not advertise or maintain an offline work queue.
+        persistenceEnabled: false,
       );
       await FirebaseAppCheck.instance.activate(
         providerAndroid:

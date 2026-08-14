@@ -11,6 +11,7 @@ import '../../../core/errors/app_exception.dart';
 import '../data/finance_repository.dart';
 import '../../households/domain/household_models.dart';
 import '../domain/finance_models.dart';
+import '../domain/monthly_comparison.dart';
 import '../services/transaction_csv_service.dart';
 import '../services/transaction_export_service.dart';
 
@@ -120,6 +121,11 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
               final members = memberSnapshot.data ?? const <HouseholdMember>[];
               return _ReportBody(
                 transactions: transactions,
+                comparison: compareFinancialMonths(
+                  all,
+                  reportMonth,
+                  category: selectedCategory,
+                ),
                 categories: categories,
                 availableMonths: appMonths,
                 selectedMonth: reportMonth,
@@ -241,6 +247,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 class _ReportBody extends StatelessWidget {
   const _ReportBody({
     required this.transactions,
+    required this.comparison,
     required this.categories,
     required this.availableMonths,
     required this.selectedMonth,
@@ -256,6 +263,7 @@ class _ReportBody extends StatelessWidget {
   });
 
   final List<FinanceTransaction> transactions;
+  final MonthlyComparison comparison;
   final List<String> categories;
   final List<DateTime> availableMonths;
   final DateTime selectedMonth;
@@ -469,6 +477,10 @@ class _ReportBody extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 18),
+        if (view == _ReportView.month) ...[
+          _MonthlyComparisonCard(comparison: comparison),
+          const SizedBox(height: 16),
+        ],
         if (transactions.isEmpty)
           const _EmptyReport()
         else ...[
@@ -633,6 +645,108 @@ class _ReportBody extends StatelessWidget {
       );
     }
     return result;
+  }
+}
+
+class _MonthlyComparisonCard extends StatelessWidget {
+  const _MonthlyComparisonCard({required this.comparison});
+
+  final MonthlyComparison comparison;
+
+  @override
+  Widget build(BuildContext context) {
+    final expenseChange = comparison.expenseChangePercent;
+    final incomeChange = comparison.incomeChangePercent;
+    final scheme = Theme.of(context).colorScheme;
+    return _SectionCard(
+      icon: Icons.compare_arrows_outlined,
+      title: 'Comparación con ${_monthLabel(comparison.previousMonth)}',
+      children: [
+        _ComparisonRow(
+          label: 'Gastos',
+          currentMinor: comparison.currentExpenseMinor,
+          previousMinor: comparison.previousExpenseMinor,
+          changePercent: expenseChange,
+          increaseIsPositive: false,
+        ),
+        const SizedBox(height: 12),
+        _ComparisonRow(
+          label: 'Ingresos',
+          currentMinor: comparison.currentIncomeMinor,
+          previousMinor: comparison.previousIncomeMinor,
+          changePercent: incomeChange,
+          increaseIsPositive: true,
+        ),
+        if (comparison.categoryWithLargestIncrease != null &&
+            comparison.largestCategoryIncreaseMinor > 0) ...[
+          const SizedBox(height: 12),
+          Text(
+            'Mayor aumento: ${comparison.categoryWithLargestIncrease} '
+            '(+${_money(comparison.largestCategoryIncreaseMinor)}).',
+            style: TextStyle(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ComparisonRow extends StatelessWidget {
+  const _ComparisonRow({
+    required this.label,
+    required this.currentMinor,
+    required this.previousMinor,
+    required this.changePercent,
+    required this.increaseIsPositive,
+  });
+
+  final String label;
+  final int currentMinor;
+  final int previousMinor;
+  final double? changePercent;
+  final bool increaseIsPositive;
+
+  @override
+  Widget build(BuildContext context) {
+    final change = changePercent;
+    final increased = change != null && change > 0;
+    final decreased = change != null && change < 0;
+    final favorable = increased ? increaseIsPositive : decreased;
+    final color =
+        change == null || change == 0
+            ? Theme.of(context).colorScheme.onSurfaceVariant
+            : favorable
+            ? const Color(0xFF047857)
+            : Theme.of(context).colorScheme.error;
+    final description =
+        change == null
+            ? previousMinor == 0 && currentMinor == 0
+                ? 'Sin valores en ambos meses'
+                : 'Sin valor previo para calcular porcentaje'
+            : change == 0
+            ? 'Sin cambio'
+            : '${change.abs().toStringAsFixed(0)}% ${change > 0 ? 'más' : 'menos'}';
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+              Text(
+                'Antes ${_money(previousMinor)} · ahora ${_money(currentMinor)}',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          description,
+          textAlign: TextAlign.end,
+          style: TextStyle(color: color, fontWeight: FontWeight.w800),
+        ),
+      ],
+    );
   }
 }
 
@@ -969,7 +1083,7 @@ class _ExportSheetState extends State<_ExportSheet> {
               RadioListTile<_PeopleExportMode>(
                 value: _PeopleExportMode.household,
                 groupValue: _peopleMode,
-                title: const Text('Todo el hogar'),
+                title: const Text('Todo el espacio'),
                 subtitle: const Text(
                   'Primero aparecerán tus datos y después los de cada integrante, separados por nombre.',
                 ),
@@ -1202,7 +1316,7 @@ class _ReportError extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.all(24),
       child: Text(
-        'No se pudo generar el reporte. Revisa el acceso cifrado del hogar.\n$error',
+        'No se pudo generar el reporte. Revisa el acceso cifrado del espacio.\n$error',
         textAlign: TextAlign.center,
       ),
     ),

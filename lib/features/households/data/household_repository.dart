@@ -14,6 +14,7 @@ abstract interface class HouseholdRepository {
   Stream<String?> watchActiveHouseholdId(String uid);
   Stream<Household> watchHousehold(String householdId, String uid);
   Stream<List<HouseholdMember>> watchMembers(String householdId);
+  Future<List<Household>> listHouseholds(String uid);
   Future<String> createHousehold(
     String name,
     AuthUser user, {
@@ -86,7 +87,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       .snapshots()
       .asyncMap((snapshot) async {
         if (!snapshot.exists) {
-          throw const AppException('El hogar ya no existe.');
+          throw const AppException('El espacio ya no existe.');
         }
         final key = await _requireKey(householdId);
         final data = snapshot.data()!;
@@ -105,10 +106,10 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
                 .get();
         return Household(
           id: householdId,
-          name: clear['name'] as String? ?? 'Mi hogar',
+          name: clear['name'] as String? ?? 'Mi espacio',
           memberCount: (data['memberCount'] as num?)?.toInt() ?? 1,
           role: member.data()?['role'] as String? ?? 'member',
-          kind: HouseholdKind.parse(clear['kind'] ?? data['kind']),
+          kind: HouseholdKind.parse(data['kind'] ?? clear['kind']),
         );
       });
 
@@ -150,6 +151,71 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       });
 
   @override
+  Future<List<Household>> listHouseholds(String uid) async {
+    try {
+      final user = await _firestore.collection('users').doc(uid).get();
+      final householdIds =
+          (user.data()?['householdIds'] as List<dynamic>? ?? const [])
+              .whereType<String>()
+              .toSet()
+              .toList();
+      final households = await Future.wait(
+        householdIds.map((householdId) async {
+          final householdReference = _firestore
+              .collection('households')
+              .doc(householdId);
+          final results = await Future.wait([
+            householdReference.get(),
+            householdReference.collection('members').doc(uid).get(),
+          ]);
+          final household = results[0];
+          final member = results[1];
+          if (!household.exists ||
+              !member.exists ||
+              member.data()?['status'] != 'active') {
+            return null;
+          }
+          final data = household.data()!;
+          final key = await _keyStore.readHouseholdKey(householdId);
+          var name = 'Espacio protegido';
+          var kind = HouseholdKind.parse(data['kind']);
+          if (key != null && data['privatePayload'] is Map) {
+            try {
+              final clear = await _crypto.decryptJson(
+                payload: _asMap(data['privatePayload']),
+                keyBytes: key,
+                context: 'households/$householdId',
+              );
+              name = clear['name'] as String? ?? 'Mi espacio';
+              kind = HouseholdKind.parse(data['kind'] ?? clear['kind']);
+            } on Object {
+              name = 'Espacio protegido';
+            }
+          }
+          return Household(
+            id: householdId,
+            name: name,
+            memberCount: (data['memberCount'] as num?)?.toInt() ?? 1,
+            role: member.data()?['role'] as String? ?? 'member',
+            kind: kind,
+            hasLocalKey: key != null,
+          );
+        }),
+      );
+      final available =
+          households.whereType<Household>().toList()..sort((left, right) {
+            if (left.isIndividual != right.isIndividual) {
+              return left.isIndividual ? -1 : 1;
+            }
+            return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+          });
+      return available;
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
   Future<String> createHousehold(
     String name,
     AuthUser user, {
@@ -167,7 +233,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       final data = _asMap(result.data);
       final householdId = data['householdId'] as String?;
       if (householdId == null) {
-        throw const AppException('Firebase no devolvió el hogar creado.');
+        throw const AppException('Firebase no devolvió el espacio creado.');
       }
       final key = await _crypto.generateKey();
       await _keyStore.writeHouseholdKey(householdId, key);
@@ -214,7 +280,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       final reference = _firestore.collection('households').doc(householdId);
       final snapshot = await reference.get();
       if (!snapshot.exists) {
-        throw const AppException('El hogar ya no existe.');
+        throw const AppException('El espacio ya no existe.');
       }
       final data = snapshot.data()!;
       final key = await _requireKey(householdId);
@@ -233,9 +299,11 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
         keyBytes: key,
         context: 'households/$householdId',
       );
-      await reference.update({
+      await _refreshVerifiedSession();
+      await _functions.httpsCallable('updateHouseholdKind').call({
+        'householdId': householdId,
+        'kind': kind.name,
         'privatePayload': encrypted,
-        'updatedAt': FieldValue.serverTimestamp(),
       });
     } catch (error) {
       throw mapFirebaseError(error);
@@ -300,7 +368,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       final resultData = _asMap(result.data);
       final householdId = resultData['householdId'] as String?;
       if (householdId == null || householdId != payload.householdId) {
-        throw const AppException('La invitación no coincide con el hogar.');
+        throw const AppException('La invitación no coincide con el espacio.');
       }
       await _keyStore.writeHouseholdKey(householdId, payload.keyBytes);
       final memberPayload = await _crypto.encryptJson(
@@ -332,7 +400,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
   }) async {
     if (role == HouseholdRole.owner) {
       throw const AppException(
-        'La propiedad del hogar no se cambia desde esta opción.',
+        'La propiedad del espacio no se cambia desde esta opción.',
       );
     }
     try {
@@ -420,7 +488,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
     final key = await _keyStore.readHouseholdKey(householdId);
     if (key == null) {
       throw const AppException(
-        'Falta la clave cifrada de este hogar. Escanea un QR nuevo de otro integrante.',
+        'Falta la clave cifrada de este espacio. Escanea un QR nuevo de otro integrante.',
         code: 'missing-household-key',
       );
     }

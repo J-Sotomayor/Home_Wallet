@@ -4,11 +4,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ThemeController extends ChangeNotifier {
   ThemeController._(this._preferences, this._userId, this._themeMode);
 
-  factory ThemeController.memory({ThemeMode mode = ThemeMode.system}) {
+  factory ThemeController.memory({ThemeMode mode = defaultThemeMode}) {
     return ThemeController._(null, 'guest', mode);
   }
 
   static const _keyPrefix = 'homewallet_theme_mode_';
+  static const defaultThemeMode = ThemeMode.light;
 
   final SharedPreferences? _preferences;
   String _userId;
@@ -19,11 +20,12 @@ class ThemeController extends ChangeNotifier {
 
   static Future<ThemeController> load({String userId = 'guest'}) async {
     final preferences = await SharedPreferences.getInstance();
-    final value = preferences.getString('$_keyPrefix$userId');
+    final value =
+        userId == 'guest' ? null : preferences.getString('$_keyPrefix$userId');
     return ThemeController._(
       preferences,
       userId,
-      _decode(value) ?? ThemeMode.system,
+      _decode(value) ?? defaultThemeMode,
     );
   }
 
@@ -37,9 +39,18 @@ class ThemeController extends ChangeNotifier {
   Future<void> switchUser(String userId) async {
     if (userId == _userId) return;
     _userId = userId;
-    _themeMode =
-        _decode(_preferences?.getString('$_keyPrefix$userId')) ??
-        ThemeMode.system;
+    final storedMode =
+        userId == 'guest'
+            ? null
+            : _decode(_preferences?.getString('$_keyPrefix$userId'));
+    if (storedMode != null) {
+      _themeMode = storedMode;
+    } else {
+      _themeMode = defaultThemeMode;
+      if (userId != 'guest') {
+        await _preferences?.setString('$_keyPrefix$userId', _themeMode.name);
+      }
+    }
     notifyListeners();
   }
 

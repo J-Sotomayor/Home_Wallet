@@ -24,7 +24,7 @@ class NotificationService {
   static const _channel = AndroidNotificationChannel(
     'homewallet_smart_alerts',
     'Alertas inteligentes',
-    description: 'Presupuestos, metas, recurrencias y actividad del hogar.',
+    description: 'Presupuestos, metas, recurrencias y actividad del espacio.',
     importance: Importance.high,
   );
 
@@ -60,7 +60,7 @@ class NotificationService {
       if (notification == null) return;
       show(
         title: notification.title ?? 'HomeWallet',
-        body: notification.body ?? 'Tienes una novedad en tu hogar.',
+        body: notification.body ?? 'Tienes una novedad en tu espacio.',
       );
     });
   }
@@ -287,7 +287,7 @@ class NotificationService {
           'homewallet_smart_alerts',
           'Alertas inteligentes',
           channelDescription:
-              'Presupuestos, metas, recurrencias y actividad del hogar.',
+              'Presupuestos, metas, recurrencias y actividad del espacio.',
           importance: Importance.high,
           priority: Priority.high,
         ),

@@ -138,7 +138,7 @@ FinancialGuidance evaluateTransactionGuidance({
           : const [
             'Separar dinero hoy protege tus próximos gastos importantes.',
             'Buen hábito: la constancia suele importar más que el tamaño de un solo aporte.',
-            'Tu ahorro fortalece el respaldo financiero del hogar.',
+            'Tu ahorro fortalece el respaldo financiero del espacio.',
           ];
   return FinancialGuidance(
     tone: FinancialGuidanceTone.positive,

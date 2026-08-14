@@ -7,6 +7,8 @@ import '../../../core/errors/app_exception.dart';
 import '../../auth/data/auth_repository.dart';
 import '../domain/finance_models.dart';
 import '../services/bank_statement_service.dart';
+import '../services/transaction_csv_service.dart';
+import '../services/transaction_import_identity.dart';
 
 class DataToolsScreen extends StatefulWidget {
   const DataToolsScreen({
@@ -30,10 +32,14 @@ class DataToolsScreen extends StatefulWidget {
 
 class _DataToolsScreenState extends State<DataToolsScreen> {
   static const _statements = BankStatementService();
+  static const _identity = TransactionImportIdentity();
   bool _busy = false;
   double? _progress;
   String? _status;
   BankStatementImportResult? _preview;
+  Set<int> _selectedImportIndexes = {};
+  Set<int> _duplicateImportIndexes = {};
+  Map<int, String> _importHashes = {};
   int? _completedCount;
   String? _completedBankName;
 
@@ -169,6 +175,23 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
           child: _ImportPreviewContent(result: result),
         ),
       ),
+      const SizedBox(height: 12),
+      Card(
+        child: ListTile(
+          key: const Key('select_import_movements'),
+          leading: const Icon(Icons.checklist_outlined),
+          title: Text(
+            '${_selectedImportIndexes.length} de ${result.items.length} seleccionados',
+          ),
+          subtitle: Text(
+            _duplicateImportIndexes.isEmpty
+                ? 'Puedes elegir exactamente qué movimientos guardar.'
+                : '${_duplicateImportIndexes.length} duplicado${_duplicateImportIndexes.length == 1 ? '' : 's'} bloqueado${_duplicateImportIndexes.length == 1 ? '' : 's'}.',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _busy ? null : () => _chooseImportedMovements(result),
+        ),
+      ),
       if (_busy || _status != null) ...[
         const SizedBox(height: 18),
         if (_busy) LinearProgressIndicator(value: _progress),
@@ -180,7 +203,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
         key: const Key('confirm_bank_import'),
         onPressed: _busy ? null : _confirmImport,
         icon: const Icon(Icons.lock_outline),
-        label: Text('Importar ${result.items.length} movimientos'),
+        label: Text('Importar ${_selectedImportIndexes.length} movimientos'),
       ),
       const SizedBox(height: 8),
       OutlinedButton.icon(
@@ -223,6 +246,9 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
           setState(() {
             _completedCount = null;
             _completedBankName = null;
+            _selectedImportIndexes = {};
+            _duplicateImportIndexes = {};
+            _importHashes = {};
             _status = null;
           });
         },
@@ -280,11 +306,35 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
           'El archivo supera 500 movimientos. Divídelo en varios periodos.',
         );
       }
+      final existing =
+          await widget.services.finance
+              .watchTransactions(widget.householdId)
+              .first;
+      final existingHashes = <String>{};
+      for (final transaction in existing) {
+        existingHashes.add(await _identity.forExisting(transaction));
+      }
+      final hashes = <int, String>{};
+      final duplicates = <int>{};
+      final seenInFile = <String>{};
+      for (var index = 0; index < imported.items.length; index++) {
+        final hash = await _identity.forImported(imported.items[index]);
+        hashes[index] = hash;
+        if (existingHashes.contains(hash) || !seenInFile.add(hash)) {
+          duplicates.add(index);
+        }
+      }
       if (!mounted) return;
       setState(() {
         _busy = false;
         _status = null;
         _preview = imported;
+        _importHashes = hashes;
+        _duplicateImportIndexes = duplicates;
+        _selectedImportIndexes = {
+          for (var index = 0; index < imported.items.length; index++)
+            if (!duplicates.contains(index)) index,
+        };
       });
     } on FormatException catch (error) {
       _showError(error.message);
@@ -305,24 +355,31 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
   Future<void> _confirmImport() async {
     final imported = _preview;
     if (imported == null || _busy) return;
+    final selectedIndexes = _selectedImportIndexes.toList()..sort();
+    if (selectedIndexes.isEmpty) {
+      _showError('Selecciona al menos un movimiento que no esté duplicado.');
+      return;
+    }
     try {
       setState(() {
         _busy = true;
         _progress = null;
-        _status = 'Cifrando y guardando ${imported.items.length} movimientos…';
+        _status = 'Cifrando y guardando ${selectedIndexes.length} movimientos…';
       });
       await widget.services.finance.addTransactions(
         householdId: widget.householdId,
         uid: widget.user.uid,
         transactions:
-            imported.items
+            selectedIndexes
+                .map((index) => (index, imported.items[index]))
                 .map(
-                  (item) => FinanceTransactionDraft(
-                    description: item.description,
-                    category: item.category,
-                    amountMinor: item.amountMinor,
-                    occurredAt: item.occurredAt,
-                    type: item.type,
+                  (entry) => FinanceTransactionDraft(
+                    importHash: _importHashes[entry.$1],
+                    description: entry.$2.description,
+                    category: entry.$2.category,
+                    amountMinor: entry.$2.amountMinor,
+                    occurredAt: entry.$2.occurredAt,
+                    type: entry.$2.type,
                     // Bank movements are regular household cash flow. Marking
                     // them as shared hid them from balances and reports.
                     shared: false,
@@ -339,7 +396,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
         setState(() {
           _preview = null;
           _status = null;
-          _completedCount = imported.items.length;
+          _completedCount = selectedIndexes.length;
           _completedBankName = imported.bankName;
         });
       }
@@ -360,8 +417,29 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
   void _discardPreview() {
     setState(() {
       _preview = null;
+      _selectedImportIndexes = {};
+      _duplicateImportIndexes = {};
+      _importHashes = {};
       _status = null;
     });
+  }
+
+  Future<void> _chooseImportedMovements(
+    BankStatementImportResult imported,
+  ) async {
+    final selected = await Navigator.of(context).push<Set<int>>(
+      MaterialPageRoute(
+        builder:
+            (_) => _ImportSelectionScreen(
+              items: imported.items,
+              selectedIndexes: _selectedImportIndexes,
+              duplicateIndexes: _duplicateImportIndexes,
+            ),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() => _selectedImportIndexes = selected);
+    }
   }
 
   void _showError(String message) {
@@ -370,6 +448,101 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _ImportSelectionScreen extends StatefulWidget {
+  const _ImportSelectionScreen({
+    required this.items,
+    required this.selectedIndexes,
+    required this.duplicateIndexes,
+  });
+
+  final List<ImportedTransaction> items;
+  final Set<int> selectedIndexes;
+  final Set<int> duplicateIndexes;
+
+  @override
+  State<_ImportSelectionScreen> createState() => _ImportSelectionScreenState();
+}
+
+class _ImportSelectionScreenState extends State<_ImportSelectionScreen> {
+  late final Set<int> _selected = {...widget.selectedIndexes};
+
+  Set<int> get _available => {
+    for (var index = 0; index < widget.items.length; index++)
+      if (!widget.duplicateIndexes.contains(index)) index,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final allAvailable = _available;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Seleccionar movimientos'),
+        actions: [
+          TextButton(
+            onPressed:
+                () => setState(() {
+                  if (_selected.length == allAvailable.length) {
+                    _selected.clear();
+                  } else {
+                    _selected
+                      ..clear()
+                      ..addAll(allAvailable);
+                  }
+                }),
+            child: Text(
+              _selected.length == allAvailable.length ? 'Ninguno' : 'Todos',
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView.builder(
+          itemCount: widget.items.length,
+          itemBuilder: (context, index) {
+            final item = widget.items[index];
+            final duplicate = widget.duplicateIndexes.contains(index);
+            return CheckboxListTile(
+              value: !duplicate && _selected.contains(index),
+              onChanged:
+                  duplicate
+                      ? null
+                      : (selected) => setState(() {
+                        if (selected == true) {
+                          _selected.add(index);
+                        } else {
+                          _selected.remove(index);
+                        }
+                      }),
+              title: Text(item.description),
+              subtitle: Text(
+                duplicate
+                    ? 'Duplicado: ya existe o se repite en el archivo'
+                    : '${DateFormat('dd/MM/yyyy').format(item.occurredAt)} · ${item.category}',
+              ),
+              secondary: Text(
+                NumberFormat.currency(
+                  locale: 'es_EC',
+                  symbol: r'$',
+                  decimalDigits: 2,
+                ).format(item.amountMinor / 100),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            );
+          },
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.all(16),
+        child: FilledButton.icon(
+          onPressed: () => Navigator.pop(context, _selected),
+          icon: const Icon(Icons.check),
+          label: Text('Usar ${_selected.length} movimientos'),
+        ),
+      ),
+    );
   }
 }
 

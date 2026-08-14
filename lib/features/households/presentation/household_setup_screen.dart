@@ -31,7 +31,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
   final _nameController = TextEditingController();
   bool _busy = false;
   bool _created = false;
-  HouseholdKind _kind = HouseholdKind.family;
+  HouseholdKind _kind = HouseholdKind.individual;
 
   @override
   void dispose() {
@@ -71,13 +71,13 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                   const Center(child: HomeWalletLogo(width: 250, height: 74)),
                   const SizedBox(height: AppSpacing.xl),
                   Text(
-                    'Configura tu hogar',
+                    'Configura tu espacio',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'No agregamos datos de demostración. Empieza creando un hogar vacío o escaneando la invitación de tu familia.',
+                    'No agregamos datos de demostración. Empieza creando un espacio vacío o ingresando una invitación.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
@@ -122,7 +122,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
-                                    'Crear un hogar nuevo',
+                                    'Crear un espacio nuevo',
                                     style: theme.textTheme.titleMedium
                                         ?.copyWith(
                                           color: scheme.onSurface,
@@ -134,7 +134,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                             ),
                             const SizedBox(height: AppSpacing.lg),
                             Text(
-                              'Nombre del hogar',
+                              'Nombre del espacio',
                               style: theme.textTheme.labelLarge?.copyWith(
                                 color: scheme.onSurface,
                                 fontWeight: FontWeight.w700,
@@ -193,7 +193,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                             ),
                             const SizedBox(height: AppSpacing.xs),
                             Text(
-                              'Tipo de hogar',
+                              'Tipo de espacio',
                               style: theme.textTheme.labelLarge?.copyWith(
                                 color: scheme.onSurface,
                                 fontWeight: FontWeight.w700,
@@ -244,10 +244,10 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                                       : const Icon(Icons.add_home_outlined),
                               label: Text(
                                 _created
-                                    ? 'Hogar creado'
+                                    ? 'Espacio creado'
                                     : _busy
-                                    ? 'Creando hogar…'
-                                    : 'Crear hogar cifrado',
+                                    ? 'Creando espacio…'
+                                    : 'Crear espacio cifrado',
                               ),
                               style: FilledButton.styleFrom(
                                 backgroundColor: scheme.primary,
@@ -260,7 +260,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                             if (_busy) ...[
                               const SizedBox(height: AppSpacing.sm),
                               Text(
-                                'Estamos cifrando y confirmando el hogar con Firebase. No cierres esta pantalla.',
+                                'Estamos cifrando y confirmando el espacio con Firebase. No cierres esta pantalla.',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: scheme.onSurfaceVariant,
@@ -277,7 +277,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                     key: const Key('join_household'),
                     onPressed: _busy ? null : _join,
                     icon: const Icon(Icons.qr_code_scanner),
-                    label: const Text('Escanear invitación familiar'),
+                    label: const Text('Ingresar invitación'),
                   ),
                 ],
               ),

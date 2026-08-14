@@ -50,6 +50,7 @@ class Household {
     required this.memberCount,
     required this.role,
     this.kind = HouseholdKind.family,
+    this.hasLocalKey = true,
   });
 
   final String id;
@@ -57,11 +58,14 @@ class Household {
   final int memberCount;
   final String role;
   final HouseholdKind kind;
+  final bool hasLocalKey;
 
   HouseholdRole get roleType => HouseholdRole.parse(role);
   bool get canManage => roleType.canManage;
   bool get canContribute => roleType.canContribute;
   bool get isOwner => roleType == HouseholdRole.owner;
+  bool get isIndividual => kind == HouseholdKind.individual;
+  bool get isCollaborative => !isIndividual;
 }
 
 class HouseholdMember {

@@ -63,6 +63,17 @@ abstract interface class FinanceRepository {
     DateTime? deadline,
     double alertThreshold = 0.8,
   });
+  Future<void> updatePlan({
+    required String householdId,
+    required FinancePlan plan,
+    required String name,
+    required int targetMinor,
+    required bool isActive,
+    String? category,
+    DateTime? deadline,
+    double alertThreshold = 0.8,
+  });
+  Future<void> deletePlan(String householdId, FinancePlan plan);
   Future<void> addCategory({
     required String householdId,
     required String uid,
@@ -171,6 +182,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
                   clear['origin'] == 'imported'
                       ? TransactionOrigin.imported
                       : TransactionOrigin.manual,
+              importHash: clear['importHash'] as String?,
               sourceName: clear['sourceName'] as String?,
               sourceVerified: clear['sourceVerified'] as bool? ?? false,
               linkedPlanId: clear['linkedPlanId'] as String?,
@@ -479,6 +491,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       type: type,
       shared: shared,
       origin: original.origin,
+      importHash: original.importHash,
       sourceName: original.sourceName,
       // Any manual correction breaks the exact match with the source file.
       sourceVerified: false,
@@ -937,25 +950,14 @@ class FirebaseFinanceRepository implements FinanceRepository {
     DateTime? deadline,
     double alertThreshold = 0.8,
   }) async {
-    final cleanName = name.trim();
-    if (cleanName.isEmpty ||
-        cleanName.length > 80 ||
-        targetMinor <= 0 ||
-        alertThreshold < 0.5 ||
-        alertThreshold > 1) {
-      throw const AppException('Completa un nombre y un objetivo válidos.');
-    }
-    if (kind == FinancePlanKind.budget &&
-        (category == null ||
-            !TransactionCategories.expenses.contains(category))) {
-      throw const AppException('Selecciona la categoría del presupuesto.');
-    }
-    if (kind == FinancePlanKind.goal &&
-        (deadline == null || deadline.isBefore(DateTime.now()))) {
-      throw const AppException(
-        'Selecciona una fecha límite futura para la meta.',
-      );
-    }
+    final cleanName = _validatePlanInput(
+      name: name,
+      kind: kind,
+      targetMinor: targetMinor,
+      category: category,
+      deadline: deadline,
+      alertThreshold: alertThreshold,
+    );
     try {
       final key = await _requireKey(householdId);
       final reference =
@@ -985,6 +987,67 @@ class FirebaseFinanceRepository implements FinanceRepository {
         'createdBy': uid,
         'payload': payload,
       });
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
+  Future<void> updatePlan({
+    required String householdId,
+    required FinancePlan plan,
+    required String name,
+    required int targetMinor,
+    required bool isActive,
+    String? category,
+    DateTime? deadline,
+    double alertThreshold = 0.8,
+  }) async {
+    final cleanName = _validatePlanInput(
+      name: name,
+      kind: plan.kind,
+      targetMinor: targetMinor,
+      category: category,
+      deadline: deadline,
+      alertThreshold: alertThreshold,
+      requireFutureDeadline: isActive,
+    );
+    final updated = FinancePlan(
+      id: plan.id,
+      name: cleanName,
+      kind: plan.kind,
+      targetMinor: targetMinor,
+      currentMinor: plan.currentMinor,
+      createdBy: plan.createdBy,
+      isActive: isActive,
+      category: plan.kind == FinancePlanKind.budget ? category : null,
+      deadline: plan.kind == FinancePlanKind.goal ? deadline : null,
+      alertThreshold: alertThreshold,
+    );
+    try {
+      final key = await _requireKey(householdId);
+      await _planReference(householdId, plan.id).update({
+        'payload': await _encryptPlanPayload(
+          householdId: householdId,
+          plan: updated,
+          key: key,
+        ),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
+  Future<void> deletePlan(String householdId, FinancePlan plan) async {
+    if (plan.kind == FinancePlanKind.goal && plan.currentMinor > 0) {
+      throw const AppException(
+        'Una meta con aportes no se elimina para no perder su trazabilidad. Márcala como completada o inactiva.',
+      );
+    }
+    try {
+      await _planReference(householdId, plan.id).delete();
     } catch (error) {
       throw mapFirebaseError(error);
     }
@@ -1076,7 +1139,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
     final key = await _keyStore.readHouseholdKey(householdId);
     if (key == null) {
       throw const AppException(
-        'No se encontró la clave de cifrado de este hogar.',
+        'No se encontró la clave de cifrado de este espacio.',
         code: 'missing-household-key',
       );
     }
@@ -1088,6 +1151,41 @@ class FirebaseFinanceRepository implements FinanceRepository {
     'saving' => TransactionType.saving,
     _ => TransactionType.expense,
   };
+
+  static String _validatePlanInput({
+    required String name,
+    required FinancePlanKind kind,
+    required int targetMinor,
+    required String? category,
+    required DateTime? deadline,
+    required double alertThreshold,
+    bool requireFutureDeadline = true,
+  }) {
+    final cleanName = name.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (cleanName.isEmpty ||
+        cleanName.length > 80 ||
+        targetMinor <= 0 ||
+        alertThreshold < 0.5 ||
+        alertThreshold > 1) {
+      throw const AppException('Completa un nombre y un objetivo válidos.');
+    }
+    if (kind == FinancePlanKind.budget &&
+        (category == null ||
+            !TransactionCategories.expenses.contains(category))) {
+      throw const AppException('Selecciona la categoría del presupuesto.');
+    }
+    if (kind == FinancePlanKind.goal) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      if (deadline == null ||
+          (requireFutureDeadline && deadline.isBefore(today))) {
+        throw const AppException(
+          'Selecciona una fecha límite válida para la meta.',
+        );
+      }
+    }
+    return cleanName;
+  }
 
   static String _validateCategoryName(String value) {
     final clean = value.trim().replaceAll(RegExp(r'\s+'), ' ');
@@ -1120,6 +1218,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       'amountMinor': transaction.amountMinor,
       'shared': transaction.shared,
       'origin': transaction.origin.name,
+      if (transaction.importHash != null) 'importHash': transaction.importHash,
       if (transaction.sourceName?.trim().isNotEmpty ?? false)
         'sourceName': transaction.sourceName!.trim(),
       'sourceVerified': transaction.sourceVerified,
@@ -1285,6 +1384,13 @@ class FirebaseFinanceRepository implements FinanceRepository {
       occurredAt: _dateFromValue(clear['occurredAt']) ?? DateTime.now(),
       type: type,
       shared: clear['shared'] as bool? ?? false,
+      origin:
+          clear['origin'] == 'imported'
+              ? TransactionOrigin.imported
+              : TransactionOrigin.manual,
+      importHash: clear['importHash'] as String?,
+      sourceName: clear['sourceName'] as String?,
+      sourceVerified: clear['sourceVerified'] as bool? ?? false,
       fundingSource: ExpenseFundingSource.parse(clear['fundingSource']),
       paidByUid: clear['paidByUid'] as String?,
       splitMode: ExpenseSplitMode.parse(clear['splitMode']),

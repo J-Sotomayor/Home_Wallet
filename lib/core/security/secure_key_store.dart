@@ -25,7 +25,7 @@ class DeviceSecureKeyStore implements SecureKeyStore {
   @override
   Future<void> writeHouseholdKey(String householdId, List<int> keyBytes) {
     if (keyBytes.length != 32) {
-      throw const FormatException('La clave del hogar debe tener 256 bits.');
+      throw const FormatException('La clave del espacio debe tener 256 bits.');
     }
     return _storage.write(
       key: 'household_key_$householdId',

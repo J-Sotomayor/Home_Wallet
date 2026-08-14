@@ -64,7 +64,7 @@ class _HouseholdGateState extends State<HouseholdGate> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return _GateError(
-            message: 'No se pudo consultar el hogar activo.',
+            message: 'No se pudo consultar el espacio activo.',
             onSignOut: widget.services.auth.signOut,
           );
         }
@@ -73,7 +73,7 @@ class _HouseholdGateState extends State<HouseholdGate> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        final householdId = _confirmedHouseholdId ?? snapshot.data;
+        final householdId = snapshot.data ?? _confirmedHouseholdId;
         if (householdId == null || householdId.isEmpty) {
           return HouseholdSetupScreen(
             user: widget.user,
@@ -85,6 +85,7 @@ class _HouseholdGateState extends State<HouseholdGate> {
           );
         }
         return _HouseholdKeyGate(
+          key: ValueKey(householdId),
           householdId: householdId,
           user: widget.user,
           services: widget.services,
@@ -97,6 +98,7 @@ class _HouseholdGateState extends State<HouseholdGate> {
 
 class _HouseholdKeyGate extends StatefulWidget {
   const _HouseholdKeyGate({
+    super.key,
     required this.householdId,
     required this.user,
     required this.services,
@@ -182,7 +184,7 @@ class _MissingKeyScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'Falta la clave de este hogar',
+                    'Falta la clave de este espacio',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),

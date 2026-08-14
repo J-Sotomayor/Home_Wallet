@@ -73,11 +73,11 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
                   OutlinedButton.icon(
                     onPressed: _busy ? null : _leave,
                     icon: const Icon(Icons.exit_to_app),
-                    label: const Text('Salir de este hogar'),
+                    label: const Text('Salir de este espacio'),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Al salir perderás el acceso a los datos cifrados de este hogar.',
+                    'Al salir perderás el acceso a los datos cifrados de este espacio.',
                     textAlign: TextAlign.center,
                   ),
                 ],
@@ -134,7 +134,7 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
                           value: _MemberAction.remove,
                           child: ListTile(
                             leading: Icon(Icons.person_remove_outlined),
-                            title: Text('Eliminar del hogar'),
+                            title: Text('Eliminar del espacio'),
                           ),
                         ),
                       ],
@@ -188,7 +188,7 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
           (context) => AlertDialog(
             title: Text('Eliminar a ${member.displayName}'),
             content: const Text(
-              'Esta persona perderá inmediatamente el acceso al hogar y necesitará una invitación nueva para volver.',
+              'Esta persona perderá inmediatamente el acceso al espacio y necesitará una invitación nueva para volver.',
             ),
             actions: [
               TextButton(
@@ -208,7 +208,7 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
         householdId: widget.household.id,
         memberId: member.uid,
       ),
-      'Integrante eliminado del hogar.',
+      'Integrante eliminado del espacio.',
     );
   }
 
@@ -217,7 +217,7 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('Salir del hogar'),
+            title: const Text('Salir del espacio'),
             content: const Text(
               'Perderás el acceso a todos sus movimientos, reportes y claves cifradas.',
             ),
@@ -269,7 +269,7 @@ class _HouseholdMembersScreenState extends State<HouseholdMembersScreen> {
       'Moderador: puede colaborar, gestionar movimientos e invitar.',
     HouseholdRole.member => 'Miembro: puede agregar y editar sus movimientos.',
     HouseholdRole.junior => 'Lector: solo puede consultar la información.',
-    HouseholdRole.owner => 'Control total del hogar.',
+    HouseholdRole.owner => 'Control total del espacio.',
   };
 }
 

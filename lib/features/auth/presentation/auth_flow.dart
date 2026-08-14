@@ -120,13 +120,13 @@ class _LoginScreenState extends State<LoginScreen> {
             const Center(child: HomeWalletLogo(width: 290, height: 86)),
             const SizedBox(height: AppSpacing.xl),
             Text(
-              'Bienvenida a tu hogar financiero',
+              'Bienvenida a tu espacio financiero',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'Accede con tu cuenta protegida de Firebase.',
+              'Accede con tu cuenta.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,

@@ -1,17 +1,7 @@
-name: Validate iOS Simulator
+name: Optional iOS Simulator (outside Android delivery)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/ios-simulator.yml
-      - ios/**
-      - lib/**
-      - assets/**
-      - pubspec.yaml
-      - pubspec.lock
 
 permissions:
   contents: read
@@ -41,9 +31,6 @@ jobs:
 
       - name: Analyze project
         run: flutter analyze
-
-      - name: Run Flutter tests
-        run: flutter test
 
       - name: Build unsigned iOS Simulator app
         run: flutter build ios --simulator --debug --no-codesign

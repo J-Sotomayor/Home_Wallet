@@ -71,6 +71,31 @@ function requiredString(
   return value;
 }
 
+function requiredCipherPayload(
+  data: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const value = data[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpsError("invalid-argument", "El contenido cifrado no es válido.");
+  }
+  const payload = value as Record<string, unknown>;
+  const keys = Object.keys(payload).sort();
+  const expected = ["alg", "ct", "iv", "tag", "v"];
+  if (keys.length !== expected.length ||
+      keys.some((item, index) => item !== expected[index]) ||
+      payload.v !== 1 || payload.alg !== "A256GCM" ||
+      typeof payload.ct !== "string" || payload.ct.length === 0 ||
+      payload.ct.length > 100000 ||
+      typeof payload.iv !== "string" || payload.iv.length < 12 ||
+      payload.iv.length > 64 ||
+      typeof payload.tag !== "string" || payload.tag.length < 16 ||
+      payload.tag.length > 64) {
+    throw new HttpsError("invalid-argument", "El contenido cifrado no es válido.");
+  }
+  return payload;
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("base64url");
 }
@@ -187,7 +212,7 @@ export const notifyNewTransaction = onDocumentCreated(
     await notifyHousehold(
       event.params.householdId,
       typeof data.createdBy === "string" ? data.createdBy : null,
-      "Nuevo movimiento en tu hogar",
+      "Nuevo movimiento en tu espacio",
       "Revisa la actividad compartida en HomeWallet.",
       "transaction",
     );
@@ -212,7 +237,7 @@ export const createHousehold = onCall(async (request) => {
     if (householdIds.length >= maxHouseholdsPerUser) {
       throw new HttpsError(
         "resource-exhausted",
-        "Alcanzaste el máximo de hogares permitidos.",
+        "Alcanzaste el máximo de espacios permitidos.",
       );
     }
     transaction.create(householdReference, {
@@ -267,6 +292,18 @@ export const createInvitation = onCall(async (request) => {
   const token = randomBytes(32).toString("base64url");
   const householdSnapshot = await db.collection("households").doc(householdId).get();
   const kind = householdSnapshot.data()?.kind ?? "family";
+  if (kind === "individual") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Un espacio Individual no puede generar invitaciones. Crea primero un espacio compartido.",
+    );
+  }
+  if (kind === "couple" && (householdSnapshot.data()?.memberCount ?? 0) >= 2) {
+    throw new HttpsError(
+      "resource-exhausted",
+      "Un espacio Pareja admite como máximo dos integrantes.",
+    );
+  }
   const expiresAt = Timestamp.fromMillis(Date.now() + invitationLifetimeMs);
   // Un único documento por hogar invalida inmediatamente el QR anterior.
   const invitationReference = db.collection("invitations").doc(householdId);
@@ -332,24 +369,33 @@ export const acceptInvitation = onCall(async (request) => {
       transaction.get(userReference),
     ]);
     if (!householdSnapshot.exists) {
-      throw new HttpsError("not-found", "El hogar ya no existe.");
+      throw new HttpsError("not-found", "El espacio ya no existe.");
     }
     const kind = householdSnapshot.data()?.kind ?? "family";
+    if (kind === "individual") {
+      throw new HttpsError(
+        "failed-precondition",
+        "No es posible incorporarse a un espacio Individual.",
+      );
+    }
     const role = kind === "family" ? requestedRole : "member";
     const alreadyMember =
       memberSnapshot.exists && memberSnapshot.data()?.status === "active";
+    const memberLimit = kind === "couple" ? 2 : maxMembersPerHousehold;
     if (!alreadyMember &&
-        (householdSnapshot.data()?.memberCount ?? 0) >= maxMembersPerHousehold) {
+        (householdSnapshot.data()?.memberCount ?? 0) >= memberLimit) {
       throw new HttpsError(
         "resource-exhausted",
-        "El hogar alcanzó el máximo de integrantes.",
+        kind === "couple" ?
+          "El espacio Pareja ya tiene dos integrantes." :
+          "El espacio alcanzó el máximo de integrantes.",
       );
     }
     const householdIds = (userSnapshot.data()?.householdIds ?? []) as unknown[];
     if (!alreadyMember && householdIds.length >= maxHouseholdsPerUser) {
       throw new HttpsError(
         "resource-exhausted",
-        "Alcanzaste el máximo de hogares permitidos.",
+        "Alcanzaste el máximo de espacios permitidos.",
       );
     }
 
@@ -383,12 +429,83 @@ export const acceptInvitation = onCall(async (request) => {
   await notifyHousehold(
     acceptedHouseholdId,
     uid,
-    "Nuevo integrante en el hogar",
+    "Nuevo integrante en el espacio",
     "Una invitación fue aceptada. Revisa la lista de integrantes.",
     "invitation-accepted",
   ).catch((error) => logError("Invitation notification failed", {error}));
 
   return {householdId: acceptedHouseholdId};
+});
+
+export const updateHouseholdKind = onCall(async (request) => {
+  const uid = requireVerifiedUser(request);
+  const data = requestMap(request);
+  const householdId = requiredString(data, "householdId", 128);
+  const kind = requiredString(data, "kind", 20);
+  const privatePayload = requiredCipherPayload(data, "privatePayload");
+  if (!["individual", "family", "couple", "group"].includes(kind)) {
+    throw new HttpsError("invalid-argument", "El tipo de espacio no es válido.");
+  }
+  await enforceRateLimit(uid, "updateHouseholdKind", 2_000);
+
+  const householdReference = db.collection("households").doc(householdId);
+  const ownerReference = householdReference.collection("members").doc(uid);
+  const invitationReference = db.collection("invitations").doc(householdId);
+  const activeMembers = await householdReference
+    .collection("members")
+    .where("status", "==", "active")
+    .get();
+
+  await db.runTransaction(async (transaction) => {
+    const [household, owner] = await Promise.all([
+      transaction.get(householdReference),
+      transaction.get(ownerReference),
+    ]);
+    if (!household.exists) {
+      throw new HttpsError("not-found", "El espacio ya no existe.");
+    }
+    if (owner.data()?.status !== "active" || owner.data()?.role !== "owner") {
+      throw new HttpsError(
+        "permission-denied",
+        "Solo el propietario puede cambiar el tipo de espacio.",
+      );
+    }
+    const currentKind = household.data()?.kind ?? "family";
+    if (currentKind === "individual" && kind !== "individual") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Crea un espacio compartido nuevo para conservar privados tus movimientos personales.",
+      );
+    }
+    if (kind === "individual" &&
+        ((household.data()?.memberCount ?? 0) !== 1 || activeMembers.size !== 1)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Solo puedes usar Individual cuando queda exactamente un integrante.",
+      );
+    }
+    if (kind === "couple" &&
+        ((household.data()?.memberCount ?? 0) > 2 || activeMembers.size > 2)) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Pareja admite como máximo dos integrantes.",
+      );
+    }
+    if (kind !== "family" &&
+        activeMembers.docs.some((member) => member.data().role === "junior")) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Cambia primero el rol de Integrante Jr.; ese rol solo está disponible en Familia.",
+      );
+    }
+    transaction.update(householdReference, {
+      kind,
+      privatePayload,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    if (kind === "individual") transaction.delete(invitationReference);
+  });
+  return {ok: true, kind};
 });
 
 export const updateMemberRole = onCall(async (request) => {
@@ -415,7 +532,7 @@ export const updateMemberRole = onCall(async (request) => {
       transaction.get(targetReference),
     ]);
     if (!household.exists || !target.exists || target.data()?.status !== "active") {
-      throw new HttpsError("not-found", "El integrante ya no pertenece al hogar.");
+      throw new HttpsError("not-found", "El integrante ya no pertenece al espacio.");
     }
     if (actor.data()?.status !== "active" || actor.data()?.role !== "owner") {
       throw new HttpsError(
@@ -429,7 +546,7 @@ export const updateMemberRole = onCall(async (request) => {
     if (role === "junior" && (household.data()?.kind ?? "family") !== "family") {
       throw new HttpsError(
         "failed-precondition",
-        "Integrante Jr está disponible únicamente para hogares familiares.",
+        "Integrante Jr está disponible únicamente para espacios Familia.",
       );
     }
     transaction.update(targetReference, {
@@ -455,7 +572,7 @@ export const removeMember = onCall(async (request) => {
   if (memberId === uid) {
     throw new HttpsError(
       "failed-precondition",
-      "Para salir del hogar usa la opción Salir del hogar.",
+      "Para salir del espacio usa la opción Salir del espacio.",
     );
   }
   await enforceRateLimit(uid, "removeMember", 2_000);
@@ -477,7 +594,7 @@ export const removeMember = onCall(async (request) => {
       );
     }
     if (!target.exists || target.data()?.status !== "active") {
-      throw new HttpsError("not-found", "El integrante ya no pertenece al hogar.");
+      throw new HttpsError("not-found", "El integrante ya no pertenece al espacio.");
     }
     if (target.data()?.role === "owner") {
       throw new HttpsError("failed-precondition", "No se puede eliminar al propietario.");
@@ -496,14 +613,16 @@ export const removeMember = onCall(async (request) => {
       updatedAt: FieldValue.serverTimestamp(),
     };
     if (targetUser.data()?.activeHouseholdId === householdId) {
-      userUpdate.activeHouseholdId = null;
+      const remainingHouseholds = ((targetUser.data()?.householdIds ?? []) as string[])
+        .filter((id) => id !== householdId);
+      userUpdate.activeHouseholdId = remainingHouseholds[0] ?? null;
     }
     transaction.set(userReference, userUpdate, {merge: true});
   });
   await sendPushToUsers(
     [memberId],
-    "Acceso al hogar actualizado",
-    "Ya no formas parte de uno de tus hogares en HomeWallet.",
+    "Acceso al espacio actualizado",
+    "Ya no formas parte de uno de tus espacios en HomeWallet.",
     {householdId, type: "member-removed"},
   ).catch((error) => logError("Removal notification failed", {error}));
   return {ok: true};
@@ -524,12 +643,12 @@ export const leaveHousehold = onCall(async (request) => {
       transaction.get(userReference),
     ]);
     if (!member.exists || member.data()?.status !== "active") {
-      throw new HttpsError("not-found", "Ya no perteneces a este hogar.");
+      throw new HttpsError("not-found", "Ya no perteneces a este espacio.");
     }
     if (member.data()?.role === "owner") {
       throw new HttpsError(
         "failed-precondition",
-        "El propietario debe transferir o eliminar el hogar antes de salir.",
+        "El propietario debe transferir o eliminar el espacio antes de salir.",
       );
     }
     transaction.update(memberReference, {
@@ -545,7 +664,9 @@ export const leaveHousehold = onCall(async (request) => {
       updatedAt: FieldValue.serverTimestamp(),
     };
     if (user.data()?.activeHouseholdId === householdId) {
-      userUpdate.activeHouseholdId = null;
+      const remainingHouseholds = ((user.data()?.householdIds ?? []) as string[])
+        .filter((id) => id !== householdId);
+      userUpdate.activeHouseholdId = remainingHouseholds[0] ?? null;
     }
     transaction.set(userReference, userUpdate, {merge: true});
   });

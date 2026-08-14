@@ -123,7 +123,15 @@ class FirebaseAuthRepository implements AuthRepository {
             },
             onError: (Object error, StackTrace stackTrace) {
               if (!controller.isClosed && currentGeneration == generation) {
-                controller.addError(error, stackTrace);
+                debugPrint(
+                  'No se pudo actualizar el perfil de ${user.uid}: $error',
+                );
+                final currentUser = _auth.currentUser;
+                if (currentUser?.uid == user.uid) {
+                  // El perfil de Firestore complementa la sesión, pero una
+                  // falla temporal al leerlo no invalida Firebase Auth.
+                  controller.add(_mapUser(currentUser, null));
+                }
               }
             },
           );
@@ -173,7 +181,7 @@ class FirebaseAuthRepository implements AuthRepository {
         };
         if (!supportedPlatform) {
           throw const AppException(
-            'El acceso con Google está disponible en Android, iOS y web.',
+            'El acceso con Google está disponible en Android.',
             code: 'google-platform-not-supported',
           );
         }

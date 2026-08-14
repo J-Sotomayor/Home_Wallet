@@ -16,6 +16,7 @@ import '../../auth/data/auth_repository.dart';
 import '../../households/domain/household_models.dart';
 import '../../households/presentation/family_invite_screen.dart';
 import '../../households/presentation/household_members_screen.dart';
+import '../../households/presentation/household_spaces_screen.dart';
 import '../../legal/presentation/legal_screen.dart';
 import '../../onboarding/presentation/app_tutorial_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
@@ -101,6 +102,7 @@ class _HomeShellState extends State<HomeShell> {
             onOpenSavings: () => setState(() => _index = 3),
             onOpenProfile: () => _openSettings(household),
             canContribute: canContribute,
+            isCollaborative: household.isCollaborative,
           ),
           _TransactionsTab(
             key: _transactionsKey,
@@ -109,9 +111,13 @@ class _HomeShellState extends State<HomeShell> {
             services: widget.services,
             canContribute: canContribute,
             canManage: household.canManage,
+            isCollaborative: household.isCollaborative,
             onEdit:
-                (transaction) =>
-                    _showTransactionForm(context, existing: transaction),
+                (transaction) => _showTransactionForm(
+                  context,
+                  existing: transaction,
+                  isCollaborative: household.isCollaborative,
+                ),
           ),
           FinanceReportsTab(
             householdId: widget.householdId,
@@ -131,6 +137,7 @@ class _HomeShellState extends State<HomeShell> {
                 () => _showTransactionForm(
                   context,
                   initialType: TransactionType.saving,
+                  isCollaborative: household.isCollaborative,
                 ),
             onOpenPlans: () => setState(() => _index = 4),
           ),
@@ -145,12 +152,14 @@ class _HomeShellState extends State<HomeShell> {
                   context,
                   initialType: type,
                   initialLinkedPlan: plan,
+                  isCollaborative: household.isCollaborative,
                 ),
             onRecordBudgetExpense:
                 (plan) => _showTransactionForm(
                   context,
                   initialType: TransactionType.expense,
                   initialCategory: plan.category,
+                  isCollaborative: household.isCollaborative,
                 ),
           ),
         ];
@@ -160,7 +169,11 @@ class _HomeShellState extends State<HomeShell> {
           floatingActionButton:
               canContribute && _index == 1
                   ? FloatingActionButton.extended(
-                    onPressed: () => _showTransactionForm(context),
+                    onPressed:
+                        () => _showTransactionForm(
+                          context,
+                          isCollaborative: household.isCollaborative,
+                        ),
                     icon: const Icon(Icons.add_circle_outline),
                     label: const Text('Registrar'),
                   )
@@ -208,6 +221,7 @@ class _HomeShellState extends State<HomeShell> {
     TransactionType? initialType,
     FinancePlan? initialLinkedPlan,
     String? initialCategory,
+    required bool isCollaborative,
   }) async {
     final selectedType =
         existing?.type ??
@@ -215,7 +229,7 @@ class _HomeShellState extends State<HomeShell> {
         await showModalBottomSheet<TransactionType>(
           context: context,
           showDragHandle: true,
-          builder: (_) => const _MovementTypePicker(),
+          builder: (_) => _MovementTypePicker(isCollaborative: isCollaborative),
         );
     if (selectedType == null || !context.mounted) return;
     final input = await showModalBottomSheet<_TransactionInput>(
@@ -377,6 +391,7 @@ class _DashboardTab extends StatelessWidget {
     required this.onOpenSavings,
     required this.onOpenProfile,
     required this.canContribute,
+    required this.isCollaborative,
   });
 
   final AuthUser user;
@@ -389,6 +404,7 @@ class _DashboardTab extends StatelessWidget {
   final VoidCallback onOpenSavings;
   final VoidCallback onOpenProfile;
   final bool canContribute;
+  final bool isCollaborative;
 
   @override
   Widget build(BuildContext context) {
@@ -508,6 +524,7 @@ class _DashboardTab extends StatelessWidget {
                                 _HomeEssentialActions(
                                   canContribute: household.canContribute,
                                   canManage: household.canManage,
+                                  isCollaborative: household.isCollaborative,
                                   onOpenRecurring:
                                       () => _openRecurring(context),
                                   onOpenSharedExpenses:
@@ -598,7 +615,7 @@ class _DashboardTab extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
                     child: Text(
-                      'Actividad del hogar',
+                      'Actividad del espacio',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
@@ -1111,6 +1128,7 @@ class _HomeEssentialActions extends StatefulWidget {
   const _HomeEssentialActions({
     required this.canContribute,
     required this.canManage,
+    required this.isCollaborative,
     required this.onOpenRecurring,
     required this.onOpenSharedExpenses,
     required this.onOpenImport,
@@ -1121,6 +1139,7 @@ class _HomeEssentialActions extends StatefulWidget {
 
   final bool canContribute;
   final bool canManage;
+  final bool isCollaborative;
   final VoidCallback onOpenRecurring;
   final VoidCallback onOpenSharedExpenses;
   final VoidCallback onOpenImport;
@@ -1167,13 +1186,14 @@ class _HomeEssentialActionsState extends State<_HomeEssentialActions> {
         description: 'Pagos e ingresos repetitivos',
         onTap: widget.onOpenRecurring,
       ),
-      _HomeToolButton(
-        key: const Key('home_tool_shared'),
-        icon: Icons.call_split_outlined,
-        title: 'Dividir gasto',
-        description: 'Calcula cuánto paga cada persona',
-        onTap: widget.onOpenSharedExpenses,
-      ),
+      if (widget.isCollaborative)
+        _HomeToolButton(
+          key: const Key('home_tool_shared'),
+          icon: Icons.call_split_outlined,
+          title: 'Dividir gasto',
+          description: 'Calcula cuánto paga cada persona',
+          onTap: widget.onOpenSharedExpenses,
+        ),
       _HomeToolButton(
         key: const Key('home_tool_import'),
         icon: Icons.upload_file_outlined,
@@ -1184,16 +1204,17 @@ class _HomeEssentialActionsState extends State<_HomeEssentialActions> {
                 : 'Disponible para adultos',
         onTap: widget.onOpenImport,
       ),
-      _HomeToolButton(
-        key: const Key('home_tool_family'),
-        icon: widget.canManage ? Icons.qr_code_2 : Icons.family_restroom,
-        title: widget.canManage ? 'Invitar' : 'Mi familia',
-        description:
-            widget.canManage
-                ? 'Agrega un integrante con QR'
-                : 'Consulta quién integra el hogar',
-        onTap: widget.onOpenFamily,
-      ),
+      if (widget.isCollaborative)
+        _HomeToolButton(
+          key: const Key('home_tool_family'),
+          icon: widget.canManage ? Icons.qr_code_2 : Icons.groups_outlined,
+          title: widget.canManage ? 'Invitar' : 'Integrantes',
+          description:
+              widget.canManage
+                  ? 'Agrega un integrante con código o QR'
+                  : 'Consulta quién integra el espacio',
+          onTap: widget.onOpenFamily,
+        ),
     ];
     final pageCount = (actions.length / 4).ceil();
     return Card(
@@ -1211,7 +1232,9 @@ class _HomeEssentialActionsState extends State<_HomeEssentialActions> {
             const SizedBox(height: 4),
             Text(
               widget.canContribute
-                  ? 'Herramientas frecuentes de tu hogar.'
+                  ? widget.isCollaborative
+                      ? 'Herramientas frecuentes de tu espacio compartido.'
+                      : 'Herramientas de tu espacio personal.'
                   : 'Consulta las herramientas disponibles para tu rol.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -1529,6 +1552,7 @@ class _TransactionsTab extends StatefulWidget {
     required this.services,
     required this.canContribute,
     required this.canManage,
+    required this.isCollaborative,
     required this.onEdit,
   });
 
@@ -1537,6 +1561,7 @@ class _TransactionsTab extends StatefulWidget {
   final AppServices services;
   final bool canContribute;
   final bool canManage;
+  final bool isCollaborative;
   final ValueChanged<FinanceTransaction> onEdit;
 
   @override
@@ -1654,7 +1679,8 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                         if (_category != null && item.category != _category) {
                           return false;
                         }
-                        if (_createdBy != null &&
+                        if (widget.isCollaborative &&
+                            _createdBy != null &&
                             item.createdBy != _createdBy) {
                           return false;
                         }
@@ -1820,28 +1846,30 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                                           setState(() => _category = value),
                                 ),
                                 const SizedBox(height: 10),
-                                DropdownButtonFormField<String?>(
-                                  value: _createdBy,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Integrante',
-                                  ),
-                                  items: [
-                                    const DropdownMenuItem<String?>(
-                                      value: null,
-                                      child: Text('Todos los integrantes'),
+                                if (widget.isCollaborative) ...[
+                                  DropdownButtonFormField<String?>(
+                                    value: _createdBy,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Integrante',
                                     ),
-                                    ...members.map(
-                                      (member) => DropdownMenuItem<String?>(
-                                        value: member.uid,
-                                        child: Text(member.displayName),
+                                    items: [
+                                      const DropdownMenuItem<String?>(
+                                        value: null,
+                                        child: Text('Todos los integrantes'),
                                       ),
-                                    ),
-                                  ],
-                                  onChanged:
-                                      (value) =>
-                                          setState(() => _createdBy = value),
-                                ),
-                                const SizedBox(height: 10),
+                                      ...members.map(
+                                        (member) => DropdownMenuItem<String?>(
+                                          value: member.uid,
+                                          child: Text(member.displayName),
+                                        ),
+                                      ),
+                                    ],
+                                    onChanged:
+                                        (value) =>
+                                            setState(() => _createdBy = value),
+                                  ),
+                                  const SizedBox(height: 10),
+                                ],
                                 Row(
                                   children: [
                                     Expanded(
@@ -1908,7 +1936,9 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   }
 
   bool get _hasAdvancedFilters =>
-      _dateRange != null || _category != null || _createdBy != null;
+      _dateRange != null ||
+      _category != null ||
+      (widget.isCollaborative && _createdBy != null);
 
   List<Widget> _buildMovementGroups(
     List<FinanceTransaction> transactions,
@@ -2099,7 +2129,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                 ),
                 title: const Text('Eliminar movimiento'),
                 content: Text(
-                  'Se eliminará “${transaction.description}” para todo el hogar. Esta acción no se puede deshacer y recalculará saldos${transaction.linkedPlanName == null ? '' : ', además del avance de ${transaction.linkedPlanName}'}.',
+                  'Se eliminará “${transaction.description}” para todo el espacio. Esta acción no se puede deshacer y recalculará saldos${transaction.linkedPlanName == null ? '' : ', además del avance de ${transaction.linkedPlanName}'}.',
                 ),
                 actions: [
                   TextButton(
@@ -2325,7 +2355,7 @@ class _TransactionDetailsSheet extends StatelessWidget {
                   const Divider(height: 1),
                   _TransactionDetailRow(
                     label: 'Registrado por',
-                    value: creatorName ?? 'Integrante del hogar',
+                    value: creatorName ?? 'Integrante del espacio',
                   ),
                   const Divider(height: 1),
                   _TransactionDetailRow(
@@ -2485,11 +2515,11 @@ class _PlansTab extends StatelessWidget {
                     icon: Icons.flag_outlined,
                     title:
                         isJunior
-                            ? 'Objetivos de nuestro hogar'
+                            ? 'Objetivos de nuestro espacio'
                             : 'Presupuestos y metas',
                     subtitle:
                         isJunior
-                            ? 'Mira cómo avanzan las metas y cómo cuidamos el presupuesto familiar.'
+                            ? 'Mira cómo avanzan las metas y cómo cuidamos el presupuesto compartido.'
                             : 'Controla límites mensuales y separa dinero para tus objetivos. Todo se actualiza con los movimientos.',
                     trailing:
                         isJunior
@@ -2545,7 +2575,7 @@ class _PlansTab extends StatelessWidget {
                                 : 'Presupuestos del mes',
                         subtitle:
                             isJunior
-                                ? 'La barra crece cuando la familia realiza gastos.'
+                                ? 'La barra crece cuando el espacio registra gastos.'
                                 : 'Miden gastos, no ingresos. Se reinician cada mes.',
                       ),
                       ...budgets.map(
@@ -2597,7 +2627,11 @@ class _PlansTab extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isGoal = plan.kind == FinancePlanKind.goal;
     final status =
-        isGoal
+        !plan.isActive
+            ? isGoal
+                ? 'Completada'
+                : 'Inactivo'
+            : isGoal
             ? details.complete
                 ? 'Cumplida'
                 : progress >= .75
@@ -2653,6 +2687,46 @@ class _PlansTab extends StatelessWidget {
                     ),
                   ),
                   Chip(label: Text(status)),
+                  if (_canManagePlan(plan))
+                    PopupMenuButton<_PlanAction>(
+                      tooltip: 'Administrar plan',
+                      onSelected:
+                          (action) => _handlePlanAction(context, plan, action),
+                      itemBuilder:
+                          (context) => [
+                            const PopupMenuItem(
+                              value: _PlanAction.edit,
+                              child: ListTile(
+                                leading: Icon(Icons.edit_outlined),
+                                title: Text('Editar'),
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: _PlanAction.toggleActive,
+                              child: ListTile(
+                                leading: Icon(
+                                  plan.isActive
+                                      ? Icons.check_circle_outline
+                                      : Icons.restart_alt,
+                                ),
+                                title: Text(
+                                  plan.isActive
+                                      ? plan.kind == FinancePlanKind.goal
+                                          ? 'Marcar completada'
+                                          : 'Desactivar'
+                                      : 'Reactivar',
+                                ),
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: _PlanAction.delete,
+                              child: ListTile(
+                                leading: Icon(Icons.delete_outline),
+                                title: Text('Eliminar'),
+                              ),
+                            ),
+                          ],
+                    ),
                 ],
               ),
               const SizedBox(height: 16),
@@ -2708,7 +2782,7 @@ class _PlansTab extends StatelessWidget {
               _PlanMilestones(progress: progress, isGoal: isGoal),
               const SizedBox(height: 12),
               _PlanDetailBox(plan: plan, progress: details),
-              if (canContribute) ...[
+              if (canContribute && plan.isActive) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
@@ -2893,7 +2967,117 @@ class _PlansTab extends StatelessWidget {
       }
     }
   }
+
+  bool _canManagePlan(FinancePlan plan) =>
+      canContribute && (plan.createdBy == user.uid || role.canManage);
+
+  Future<void> _handlePlanAction(
+    BuildContext context,
+    FinancePlan plan,
+    _PlanAction action,
+  ) async {
+    switch (action) {
+      case _PlanAction.edit:
+        await _editPlan(context, plan);
+      case _PlanAction.toggleActive:
+        await _setPlanActive(context, plan, !plan.isActive);
+      case _PlanAction.delete:
+        await _deletePlan(context, plan);
+    }
+  }
+
+  Future<void> _editPlan(BuildContext context, FinancePlan plan) async {
+    final input = await showModalBottomSheet<_PlanInput>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _PlanForm(existing: plan),
+    );
+    if (input == null || !context.mounted) return;
+    try {
+      await services.finance.updatePlan(
+        householdId: householdId,
+        plan: plan,
+        name: input.name,
+        targetMinor: input.targetMinor,
+        isActive: plan.isActive,
+        category: input.category,
+        deadline: input.deadline,
+        alertThreshold: input.alertThreshold,
+      );
+    } on AppException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<void> _setPlanActive(
+    BuildContext context,
+    FinancePlan plan,
+    bool isActive,
+  ) async {
+    try {
+      await services.finance.updatePlan(
+        householdId: householdId,
+        plan: plan,
+        name: plan.name,
+        targetMinor: plan.targetMinor,
+        isActive: isActive,
+        category: plan.category,
+        deadline: plan.deadline,
+        alertThreshold: plan.alertThreshold,
+      );
+    } on AppException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  Future<void> _deletePlan(BuildContext context, FinancePlan plan) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Eliminar plan'),
+            content: Text(
+              plan.kind == FinancePlanKind.goal && plan.currentMinor > 0
+                  ? 'Esta meta tiene aportes y debe conservarse para mantener la trazabilidad de los movimientos.'
+                  : 'Se eliminará “${plan.name}”. Los movimientos registrados no se eliminarán.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed:
+                    plan.kind == FinancePlanKind.goal && plan.currentMinor > 0
+                        ? null
+                        : () => Navigator.pop(context, true),
+                child: const Text('Eliminar'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await services.finance.deletePlan(householdId, plan);
+    } on AppException catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
 }
+
+enum _PlanAction { edit, toggleActive, delete }
 
 class _PlanLogicGuide extends StatelessWidget {
   const _PlanLogicGuide();
@@ -2943,7 +3127,7 @@ class _JuniorPlansIntro extends StatelessWidget {
           SizedBox(width: 11),
           Expanded(
             child: Text(
-              'Aprender a ahorrar también es ver el progreso. Tu acceso es de consulta y no modifica el dinero del hogar.',
+              'Aprender a ahorrar también es ver el progreso. Tu acceso es de consulta y no modifica el dinero del espacio.',
             ),
           ),
         ],
@@ -3147,6 +3331,7 @@ class _ProfileTab extends StatefulWidget {
 class _ProfileTabState extends State<_ProfileTab> {
   bool? _biometricEnabled;
   bool? _notificationsEnabled;
+  bool _signingOut = false;
 
   @override
   void initState() {
@@ -3175,7 +3360,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               const AppPageHeader(
                 icon: Icons.person_outline,
                 title: 'Perfil y configuración',
-                subtitle: 'Tu cuenta, hogar, seguridad y preferencias.',
+                subtitle: 'Tu cuenta, espacios, seguridad y preferencias.',
               ),
               const SizedBox(height: 20),
               Card(
@@ -3208,16 +3393,13 @@ class _ProfileTabState extends State<_ProfileTab> {
                         : '${currentHousehold.memberCount} ${currentHousehold.memberCount == 1 ? 'integrante' : 'integrantes'} · ${currentHousehold.kind.label}',
                   ),
                   trailing:
-                      currentHousehold.canManage
-                          ? IconButton(
-                            key: const Key('edit_household_kind'),
-                            tooltip: 'Cambiar tipo de hogar',
-                            onPressed:
-                                () => _changeHouseholdKind(currentHousehold),
-                            icon: const Icon(Icons.edit_outlined),
-                          )
-                          : const Icon(Icons.verified_user_outlined),
-                  onTap: () => _showMembers(currentHousehold),
+                      currentHousehold.isCollaborative
+                          ? const Icon(Icons.chevron_right)
+                          : null,
+                  onTap:
+                      currentHousehold.isCollaborative
+                          ? () => _showMembers(currentHousehold)
+                          : () => _openSpaces(),
                 ),
               ),
               if (!currentHousehold.canContribute) ...[
@@ -3234,6 +3416,55 @@ class _ProfileTabState extends State<_ProfileTab> {
                 ),
               ],
               const SizedBox(height: 12),
+              Text(
+                'Espacios',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  key: const Key('manage_spaces'),
+                  leading: const Icon(Icons.space_dashboard_outlined),
+                  title: const Text('Mis espacios'),
+                  subtitle: const Text(
+                    'Cambia entre tus datos personales y compartidos',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openSpaces,
+                ),
+              ),
+              if (currentHousehold.isIndividual) ...[
+                const SizedBox(height: 8),
+                Card(
+                  child: ListTile(
+                    key: const Key('create_shared_from_individual'),
+                    leading: const Icon(Icons.group_add_outlined),
+                    title: const Text('Crear espacio compartido'),
+                    subtitle: const Text(
+                      'Crea una Pareja, Familia o Grupo sin compartir tu historial personal',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap:
+                        () => _openSpaces(HouseholdSpacesAction.createShared),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  key: const Key('join_space_from_settings'),
+                  leading: const Icon(Icons.qr_code_scanner),
+                  title: const Text('Unirse a un espacio'),
+                  subtitle: const Text(
+                    'Ingresa el código de una Pareja, Familia o Grupo',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openSpaces(HouseholdSpacesAction.join),
+                ),
+              ),
+              const SizedBox(height: 16),
               Text(
                 'Organización',
                 style: Theme.of(
@@ -3289,8 +3520,10 @@ class _ProfileTabState extends State<_ProfileTab> {
                         Icons.notifications_active_outlined,
                       ),
                       title: const Text('Notificaciones inteligentes'),
-                      subtitle: const Text(
-                        'Alertas de saldo, presupuestos, metas, recurrencias e invitaciones',
+                      subtitle: Text(
+                        currentHousehold.isCollaborative
+                            ? 'Alertas de saldo, presupuestos, metas, recurrencias e invitaciones'
+                            : 'Alertas de saldo, presupuestos, metas y recurrencias',
                       ),
                       value: _notificationsEnabled ?? false,
                       onChanged:
@@ -3381,9 +3614,21 @@ class _ProfileTabState extends State<_ProfileTab> {
                     ),
                     const Divider(height: 1),
                     ListTile(
-                      leading: const Icon(Icons.logout),
-                      title: const Text('Cerrar sesión'),
-                      onTap: widget.services.auth.signOut,
+                      key: const Key('sign_out_tile'),
+                      leading:
+                          _signingOut
+                              ? const SizedBox.square(
+                                dimension: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                ),
+                              )
+                              : const Icon(Icons.logout),
+                      title: Text(
+                        _signingOut ? 'Cerrando sesión…' : 'Cerrar sesión',
+                      ),
+                      enabled: !_signingOut,
+                      onTap: _signingOut ? null : _signOut,
                     ),
                   ],
                 ),
@@ -3399,6 +3644,31 @@ class _ProfileTabState extends State<_ProfileTab> {
         },
       ),
     );
+  }
+
+  Future<void> _signOut() async {
+    if (_signingOut) return;
+    setState(() => _signingOut = true);
+    try {
+      await widget.services.auth.signOut();
+      if (!mounted) return;
+      Navigator.of(
+        context,
+        rootNavigator: true,
+      ).popUntil((route) => route.isFirst);
+    } on AppException catch (error) {
+      if (!mounted) return;
+      setState(() => _signingOut = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on Object {
+      if (!mounted) return;
+      setState(() => _signingOut = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo cerrar la sesión.')),
+      );
+    }
   }
 
   Future<void> _changeNotifications(bool enabled) async {
@@ -3448,7 +3718,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                     icon: Icons.fingerprint,
                     title: 'Protege HomeWallet',
                     subtitle:
-                        'Android o iOS valida la huella, el rostro, PIN o patrón sin compartir esos datos con la app.',
+                        'Android valida la huella, el rostro, PIN o patrón sin compartir esos datos con la app.',
                   ),
                   const SizedBox(height: 18),
                   Card(
@@ -3548,6 +3818,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   void _showMembers(Household household) {
+    if (household.isIndividual) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder:
@@ -3560,72 +3831,20 @@ class _ProfileTabState extends State<_ProfileTab> {
     );
   }
 
-  Future<void> _changeHouseholdKind(Household household) async {
-    final selected = await showModalBottomSheet<HouseholdKind>(
-      context: context,
-      showDragHandle: true,
-      useSafeArea: true,
-      builder:
-          (context) => Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const AppPageHeader(
-                  icon: Icons.home_outlined,
-                  title: 'Tipo de hogar',
-                  subtitle:
-                      'Elige cómo quieres identificar este espacio. El nombre y los movimientos no cambiarán.',
-                ),
-                const SizedBox(height: 14),
-                ...HouseholdKind.values.map(
-                  (kind) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Card(
-                      color:
-                          household.kind == kind
-                              ? Theme.of(context).colorScheme.primaryContainer
-                              : null,
-                      child: ListTile(
-                        key: Key('change_household_kind_${kind.name}'),
-                        leading: Icon(_householdKindIcon(kind)),
-                        title: Text(kind.label),
-                        trailing:
-                            household.kind == kind
-                                ? Icon(
-                                  Icons.check_circle,
-                                  color: Theme.of(context).colorScheme.primary,
-                                )
-                                : const Icon(Icons.chevron_right),
-                        onTap: () => Navigator.pop(context, kind),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+  Future<void> _openSpaces([HouseholdSpacesAction? initialAction]) async {
+    final selected = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder:
+            (_) => HouseholdSpacesScreen(
+              user: widget.user,
+              currentHouseholdId: widget.householdId,
+              repository: widget.services.households,
+              initialAction: initialAction,
             ),
-          ),
+      ),
     );
-    if (selected == null || selected == household.kind || !mounted) return;
-    try {
-      await widget.services.households.updateHouseholdKind(
-        householdId: household.id,
-        kind: selected,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Tipo de hogar actualizado a ${selected.label}.'),
-          ),
-        );
-      }
-    } on AppException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
+    if (selected != null && selected != widget.householdId && mounted) {
+      Navigator.of(context).pop();
     }
   }
 }
@@ -3640,7 +3859,9 @@ IconData _householdKindIcon(HouseholdKind kind) => switch (kind) {
 };
 
 class _MovementTypePicker extends StatelessWidget {
-  const _MovementTypePicker();
+  const _MovementTypePicker({required this.isCollaborative});
+
+  final bool isCollaborative;
 
   @override
   Widget build(BuildContext context) {
@@ -3679,11 +3900,13 @@ class _MovementTypePicker extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 2),
-              const Text(
-                'Para repartir una cuenta entre personas, usa “Dividir gasto” en los accesos de Inicio.',
-                textAlign: TextAlign.center,
-              ),
+              if (isCollaborative) ...[
+                const SizedBox(height: 2),
+                const Text(
+                  'Para repartir una cuenta entre personas, usa “Dividir gasto” en los accesos de Inicio.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ],
           ),
         ),
@@ -3951,7 +4174,7 @@ class _TransactionFormState extends State<_TransactionForm> {
       items: [
         const DropdownMenuItem(
           value: 'general',
-          child: Text('Saldo disponible del hogar'),
+          child: Text('Saldo disponible del espacio'),
         ),
         DropdownMenuItem(
           value: 'savings',
@@ -4601,10 +4824,10 @@ class _MovementReviewSheet extends StatelessWidget {
       TransactionType.expense when fundingSource == ExpenseFundingSource.goal =>
         'Se descontará de la meta ${linkedPlan?.name ?? 'seleccionada'}.',
       TransactionType.expense =>
-        'Se descontará del saldo disponible del hogar.',
+        'Se descontará del saldo disponible del espacio.',
       TransactionType.income when linkedPlan != null =>
         'Aumentará la meta ${linkedPlan!.name} y no quedará disponible para gastar.',
-      TransactionType.income => 'Aumentará el saldo disponible del hogar.',
+      TransactionType.income => 'Aumentará el saldo disponible del espacio.',
       TransactionType.saving when linkedPlan != null =>
         'Aumentará el avance de la meta ${linkedPlan!.name}.',
       TransactionType.saving =>
@@ -4728,19 +4951,42 @@ class _FinancialGuidanceCard extends StatelessWidget {
 }
 
 class _PlanForm extends StatefulWidget {
-  const _PlanForm();
+  const _PlanForm({this.existing});
+
+  final FinancePlan? existing;
 
   @override
   State<_PlanForm> createState() => _PlanFormState();
 }
 
 class _PlanFormState extends State<_PlanForm> {
-  final _nameController = TextEditingController();
-  final _targetController = TextEditingController();
+  late final TextEditingController _nameController;
+  late final TextEditingController _targetController;
   FinancePlanKind? _kind;
   String _category = TransactionCategories.expenses.first;
   DateTime? _deadline;
   double _alertThreshold = 0.8;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    _nameController = TextEditingController(text: existing?.name ?? '');
+    _targetController = TextEditingController(
+      text:
+          existing == null
+              ? ''
+              : (existing.targetMinor / 100).toStringAsFixed(2),
+    );
+    _kind = existing?.kind;
+    _category =
+        existing?.category != null &&
+                TransactionCategories.expenses.contains(existing!.category)
+            ? existing.category!
+            : TransactionCategories.expenses.first;
+    _deadline = existing?.deadline;
+    _alertThreshold = existing?.alertThreshold ?? 0.8;
+  }
 
   @override
   void dispose() {
@@ -4767,35 +5013,56 @@ class _PlanFormState extends State<_PlanForm> {
             ),
             const SizedBox(height: 18),
             Text(
-              'Nuevo plan',
+              widget.existing == null ? 'Nuevo plan' : 'Editar plan',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 6),
-            const Text('Primero elige qué quieres controlar.'),
+            Text(
+              widget.existing == null
+                  ? 'Primero elige qué quieres controlar.'
+                  : 'El tipo del plan se conserva para proteger su historial.',
+            ),
             const SizedBox(height: 14),
-            _PlanKindOption(
-              key: const Key('plan_kind_budget'),
-              selected: _kind == FinancePlanKind.budget,
-              icon: Icons.account_balance_wallet_outlined,
-              title: 'Presupuesto mensual',
-              description:
-                  'Define un límite de gasto. Los ingresos no llenan esta barra.',
-              onTap: () => setState(() => _kind = FinancePlanKind.budget),
-            ),
-            const SizedBox(height: 9),
-            _PlanKindOption(
-              key: const Key('plan_kind_goal'),
-              selected: _kind == FinancePlanKind.goal,
-              icon: Icons.flag_outlined,
-              title: 'Meta de ahorro',
-              description:
-                  'Reúne dinero poco a poco asignando ingresos o ahorros.',
-              onTap:
-                  () => setState(() {
-                    _kind = FinancePlanKind.goal;
-                    _deadline ??= DateTime.now().add(const Duration(days: 90));
-                  }),
-            ),
+            if (widget.existing == null) ...[
+              _PlanKindOption(
+                key: const Key('plan_kind_budget'),
+                selected: _kind == FinancePlanKind.budget,
+                icon: Icons.account_balance_wallet_outlined,
+                title: 'Presupuesto mensual',
+                description:
+                    'Define un límite de gasto. Los ingresos no llenan esta barra.',
+                onTap: () => setState(() => _kind = FinancePlanKind.budget),
+              ),
+              const SizedBox(height: 9),
+              _PlanKindOption(
+                key: const Key('plan_kind_goal'),
+                selected: _kind == FinancePlanKind.goal,
+                icon: Icons.flag_outlined,
+                title: 'Meta de ahorro',
+                description:
+                    'Reúne dinero poco a poco asignando ingresos o ahorros.',
+                onTap:
+                    () => setState(() {
+                      _kind = FinancePlanKind.goal;
+                      _deadline ??= DateTime.now().add(
+                        const Duration(days: 90),
+                      );
+                    }),
+              ),
+            ] else
+              _PlanKindOption(
+                selected: _kind == FinancePlanKind.budget,
+                icon:
+                    _kind == FinancePlanKind.goal
+                        ? Icons.flag_outlined
+                        : Icons.account_balance_wallet_outlined,
+                title:
+                    _kind == FinancePlanKind.goal
+                        ? 'Meta de ahorro'
+                        : 'Presupuesto mensual',
+                description: 'Tipo protegido para conservar la trazabilidad.',
+                onTap: () {},
+              ),
             if (_kind != null) ...[
               const SizedBox(height: 18),
               Text(
@@ -4884,7 +5151,9 @@ class _PlanFormState extends State<_PlanForm> {
                 onPressed: _save,
                 icon: const Icon(Icons.enhanced_encryption_outlined),
                 label: Text(
-                  _kind == FinancePlanKind.goal
+                  widget.existing != null
+                      ? 'Guardar cambios'
+                      : _kind == FinancePlanKind.goal
                       ? 'Crear meta de ahorro'
                       : 'Crear presupuesto mensual',
                 ),
@@ -4935,10 +5204,13 @@ class _PlanFormState extends State<_PlanForm> {
 
   Future<void> _pickDeadline() async {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initial =
+        _deadline == null || _deadline!.isBefore(today) ? today : _deadline!;
     final value = await showDatePicker(
       context: context,
-      initialDate: _deadline ?? now.add(const Duration(days: 90)),
-      firstDate: now,
+      initialDate: initial,
+      firstDate: today,
       lastDate: DateTime(now.year + 20),
       helpText: 'Fecha límite de la meta',
     );
@@ -5427,5 +5699,5 @@ String _initials(String name) {
 
 String _errorText(Object? error) => switch (error) {
   AppException value => value.message,
-  _ => 'Revisa tu conexión o los permisos del hogar.',
+  _ => 'Revisa tu conexión o los permisos del espacio.',
 };

@@ -23,16 +23,19 @@ enum ExpenseFundingSource {
 enum ExpenseSplitMode {
   equal,
   percentage,
+  income,
   custom;
 
   String get label => switch (this) {
     ExpenseSplitMode.equal => 'Partes iguales',
     ExpenseSplitMode.percentage => 'Por porcentaje',
+    ExpenseSplitMode.income => 'Proporcional a los ingresos',
     ExpenseSplitMode.custom => 'Valores personalizados',
   };
 
   static ExpenseSplitMode parse(Object? value) => switch (value) {
     'percentage' => ExpenseSplitMode.percentage,
+    'income' => ExpenseSplitMode.income,
     'custom' => ExpenseSplitMode.custom,
     _ => ExpenseSplitMode.equal,
   };
@@ -131,6 +134,7 @@ class FinanceTransaction {
     required this.createdBy,
     required this.shared,
     this.origin = TransactionOrigin.manual,
+    this.importHash,
     this.sourceName,
     this.sourceVerified = false,
     this.linkedPlanId,
@@ -152,6 +156,7 @@ class FinanceTransaction {
   final String createdBy;
   final bool shared;
   final TransactionOrigin origin;
+  final String? importHash;
   final String? sourceName;
   final bool sourceVerified;
   final String? linkedPlanId;
@@ -190,6 +195,7 @@ class FinanceTransactionDraft {
     required this.type,
     required this.shared,
     this.origin = TransactionOrigin.manual,
+    this.importHash,
     this.sourceName,
     this.sourceVerified = false,
     this.linkedPlanId,
@@ -209,6 +215,7 @@ class FinanceTransactionDraft {
   final TransactionType type;
   final bool shared;
   final TransactionOrigin origin;
+  final String? importHash;
   final String? sourceName;
   final bool sourceVerified;
   final String? linkedPlanId;

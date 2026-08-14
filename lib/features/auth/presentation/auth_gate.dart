@@ -47,9 +47,34 @@ class _AuthGateState extends State<AuthGate> {
       stream: _userStream,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return const Scaffold(
+          return Scaffold(
             body: Center(
-              child: Text('No se pudo iniciar Firebase Authentication.'),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.cloud_off_outlined, size: 48),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No se pudo comprobar tu sesión.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Verifica tu conexión e inténtalo nuevamente.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Reintentar'),
+                    ),
+                  ],
+                ),
+              ),
             ),
           );
         }
@@ -95,6 +120,12 @@ class _AuthGateState extends State<AuthGate> {
     if (widget.themeController.userId == userId) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(widget.themeController.switchUser(userId));
+    });
+  }
+
+  void _retry() {
+    setState(() {
+      _userStream = widget.services.auth.watchUser();
     });
   }
 
