@@ -1,7 +1,7 @@
 name: homewallet
 description: "Finanzas personales y colaborativas por espacios."
 publish_to: 'none'
-version: 1.0.4+5
+version: 1.0.5+6
 
 environment:
   sdk: ^3.7.2

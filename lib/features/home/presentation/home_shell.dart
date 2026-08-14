@@ -523,7 +523,7 @@ class _DashboardTab extends StatelessWidget {
                                 const SizedBox(height: 14),
                                 _HomeEssentialActions(
                                   canContribute: household.canContribute,
-                                  canManage: household.canManage,
+                                  canInvite: household.canInvite,
                                   isCollaborative: household.isCollaborative,
                                   onOpenRecurring:
                                       () => _openRecurring(context),
@@ -533,7 +533,7 @@ class _DashboardTab extends StatelessWidget {
                                   onOpenTransactions: onOpenTransactions,
                                   onOpenSavings: onOpenSavings,
                                   onOpenFamily:
-                                      household.canManage
+                                      household.canInvite
                                           ? () =>
                                               _openInvite(context, household)
                                           : () =>
@@ -1129,7 +1129,7 @@ class _BalanceCardMetric extends StatelessWidget {
 class _HomeEssentialActions extends StatefulWidget {
   const _HomeEssentialActions({
     required this.canContribute,
-    required this.canManage,
+    required this.canInvite,
     required this.isCollaborative,
     required this.onOpenRecurring,
     required this.onOpenSharedExpenses,
@@ -1140,7 +1140,7 @@ class _HomeEssentialActions extends StatefulWidget {
   });
 
   final bool canContribute;
-  final bool canManage;
+  final bool canInvite;
   final bool isCollaborative;
   final VoidCallback onOpenRecurring;
   final VoidCallback onOpenSharedExpenses;
@@ -1209,10 +1209,10 @@ class _HomeEssentialActionsState extends State<_HomeEssentialActions> {
       if (widget.isCollaborative)
         _HomeToolButton(
           key: const Key('home_tool_family'),
-          icon: widget.canManage ? Icons.qr_code_2 : Icons.groups_outlined,
-          title: widget.canManage ? 'Invitar' : 'Integrantes',
+          icon: widget.canInvite ? Icons.qr_code_2 : Icons.groups_outlined,
+          title: widget.canInvite ? 'Invitar' : 'Integrantes',
           description:
-              widget.canManage
+              widget.canInvite
                   ? 'Agrega un integrante con código o QR'
                   : 'Consulta quién integra el espacio',
           onTap: widget.onOpenFamily,
@@ -3637,7 +3637,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 20),
               Text(
-                'HomeWallet 1.0.4 · Firebase Blaze',
+                'HomeWallet 1.0.5 · Firebase Blaze',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),

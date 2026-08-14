@@ -66,6 +66,10 @@ class Household {
   bool get isOwner => roleType == HouseholdRole.owner;
   bool get isIndividual => kind == HouseholdKind.individual;
   bool get isCollaborative => !isIndividual;
+  bool get canInvite =>
+      canManage &&
+      isCollaborative &&
+      !(kind == HouseholdKind.couple && memberCount >= 2);
 }
 
 class HouseholdMember {

@@ -35,4 +35,32 @@ void main() {
     expect(HouseholdRole.member.canContribute, isTrue);
     expect(HouseholdRole.junior.canContribute, isFalse);
   });
+
+  test('a full Couple shows members instead of inviting again', () {
+    const availableCouple = Household(
+      id: 'couple-open',
+      name: 'Pareja',
+      memberCount: 1,
+      role: 'owner',
+      kind: HouseholdKind.couple,
+    );
+    const fullCouple = Household(
+      id: 'couple-full',
+      name: 'Pareja completa',
+      memberCount: 2,
+      role: 'owner',
+      kind: HouseholdKind.couple,
+    );
+    const fullCoupleMember = Household(
+      id: 'couple-member',
+      name: 'Pareja completa',
+      memberCount: 2,
+      role: 'member',
+      kind: HouseholdKind.couple,
+    );
+
+    expect(availableCouple.canInvite, isTrue);
+    expect(fullCouple.canInvite, isFalse);
+    expect(fullCoupleMember.canInvite, isFalse);
+  });
 }

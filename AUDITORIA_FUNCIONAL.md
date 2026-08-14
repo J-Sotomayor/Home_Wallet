@@ -6,7 +6,7 @@ Esta matriz describe el código que existe en este repositorio y las pruebas eje
 
 | # | Área | Estado comprobado | Resultado |
 |---|---|---|---|
-| 1 | Individual / Pareja / Familia / Grupo | Implementado | Existen los cuatro tipos. Cada cuenta puede tener como máximo un Individual, protegido transaccionalmente; Individual tiene un único propietario y oculta invitaciones, integrantes, división, deudas y filtros colaborativos. No se convierte hacia/desde tipos compartidos. Pareja mantiene el límite atómico de dos; Familia y Grupo no tienen un máximo de producto. |
+| 1 | Individual / Pareja / Familia / Grupo | Implementado | Existen los cuatro tipos. Cada cuenta puede tener como máximo un Individual, protegido transaccionalmente; Individual tiene un único propietario y oculta invitaciones, integrantes, división, deudas y filtros colaborativos. No se convierte hacia/desde tipos compartidos. Pareja mantiene el límite atómico de dos y, al completarse, cambia “Invitar” por “Integrantes”; Familia y Grupo no tienen un máximo de producto. |
 | 2 | Invitaciones | Implementado con protección de servidor | Generación por código/QR, rol fijado por quien invita, revocación explícita, token aleatorio con hash, vencimiento de 15 minutos y uso único. UI y Cloud Functions impiden invitar desde Individual, aceptar hacia Individual, reutilizar o aceptar tokens vencidos, y controlan pertenencia/cupos. |
 | 3 | Roles y permisos | Implementado | Propietario, Moderador, Miembro y Lector (Integrante Jr). Jr solo está permitido en Familia y es de lectura. Propietario/Moderador administran; el cambio de rol y expulsión quedan reservados al propietario; un integrante puede salir y el propietario no puede abandonar accidentalmente. Las reglas de Firestore vuelven a validar lectura/escritura. |
 | 4 | Terminología | Implementado en la interfaz | Los textos visibles principales usan “espacio financiero”, “mi espacio”, “unirse a un espacio” e “invitar integrante”. Se conservaron nombres internos como `Household`, `householdId` y `HouseholdKind`. |
@@ -34,12 +34,12 @@ Esta matriz describe el código que existe en este repositorio y las pruebas eje
 ## Validaciones locales ejecutadas
 
 - `flutter analyze`: sin problemas.
-- `flutter test`: 17 pruebas aprobadas, incluidas tema claro tras verificación, cuatro tipos/roles, división proporcional, comparación mensual, historial sin corte arbitrario, deduplicación y exportación XLSX/PDF/CSV.
+- `flutter test`: 18 pruebas aprobadas, incluidas tema claro tras verificación, cuatro tipos/roles, Pareja completa sin nueva invitación, división proporcional, comparación mensual, historial sin corte arbitrario, deduplicación y exportación XLSX/PDF/CSV.
 - `npm run build` en `functions`: compilación TypeScript aprobada.
 - Firebase Emulator: 4 pruebas de reglas aprobadas (aislamiento, Individual sin divisiones, Jr. de solo lectura y selector activo autorizado) y 4 pruebas de Functions aprobadas (Individual único, más de cinco espacios, rol/revocación, concurrencia de Pareja y conservación de membresías).
 - Firebase producción: reglas y Functions desplegadas; tareas programadas activas en `us-central1`, región compatible con Cloud Scheduler.
 - Auditoría agregada de producción: 4 espacios Individual; ninguno con integrantes, propietarios o conteos inválidos; ningún espacio activo inválido y ninguna cuenta con más de un Individual.
-- Android release: APK `1.0.4+5` compilado y firma v1/v2 verificada. La instalación y los flujos entre dos teléfonos quedan como prueba manual final.
+- Android release: APK `1.0.5+6` compilado y firma v1/v2 verificada. La instalación y los flujos entre dos teléfonos quedan como prueba manual final.
 
 ## Validaciones que requieren evidencia externa
 

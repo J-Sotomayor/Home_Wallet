@@ -12,7 +12,7 @@
   <img alt="Flutter 3.29.2" src="https://img.shields.io/badge/Flutter-3.29.2-02569B?logo=flutter&logoColor=white">
   <img alt="Dart 3.7.2" src="https://img.shields.io/badge/Dart-3.7.2-0175C2?logo=dart&logoColor=white">
   <img alt="Firebase" src="https://img.shields.io/badge/Firebase-Backend-FFCA28?logo=firebase&logoColor=black">
-  <img alt="Versión 1.0.4" src="https://img.shields.io/badge/versi%C3%B3n-1.0.4-blue">
+  <img alt="Versión 1.0.5" src="https://img.shields.io/badge/versi%C3%B3n-1.0.5-blue">
 </p>
 
 ## Descripción
@@ -207,7 +207,7 @@ homewallet/
 
 ## Estado del proyecto
 
-La versión actual es `1.0.4+5`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37) y APK release firmado para pruebas físicas por instalación directa. iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere pruebas en los dispositivos Android declarados y la activación controlada de App Check después de publicar por Google Play o adoptar un proveedor compatible con todos los dispositivos admitidos.
+La versión actual es `1.0.5+6`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37) y APK release firmado para pruebas físicas por instalación directa. iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere pruebas en los dispositivos Android declarados y la activación controlada de App Check después de publicar por Google Play o adoptar un proveedor compatible con todos los dispositivos admitidos.
 
 ## Licencia
 
