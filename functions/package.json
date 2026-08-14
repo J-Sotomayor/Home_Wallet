@@ -7,8 +7,6 @@
   },
   "scripts": {
     "build": "tsc",
-    "test:rules": "node --test test/firestore.rules.test.mjs",
-    "test:storage-rules": "node --test test/storage.rules.test.mjs",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth,storage",
     "deploy": "firebase deploy --only functions"
   },
@@ -17,9 +15,7 @@
     "firebase-functions": "^7.3.2"
   },
   "devDependencies": {
-    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/node": "^22.18.0",
-    "firebase": "^12.17.0",
     "typescript": "^5.9.3"
   }
 }
