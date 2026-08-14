@@ -144,22 +144,61 @@ class NotificationService {
     final preferences = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final monthKey = '${now.year}-${now.month.toString().padLeft(2, '0')}';
-    final balances = FinanceBalances.calculate(transactions, plans);
-    if (balances.uncoveredExpenses > 0) {
-      await _showOnce(
+    final balances = FinanceBalances.calculate(
+      transactions,
+      plans,
+      currentPeriod: DateTime.now(),
+    );
+    var sentAlert = false;
+    final activePlans = plans.where((item) => item.isActive).toList();
+
+    // Emit at most one notification per evaluation. Completion is the most
+    // meaningful event, followed by cash-flow and budget warnings.
+    for (final plan in activePlans.where(
+      (item) => item.kind == FinancePlanKind.goal,
+    )) {
+      final progress =
+          plan.targetMinor == 0 ? 0.0 : plan.currentMinor / plan.targetMinor;
+      if (progress < 1) continue;
+      sentAlert = await _showOnce(
+        preferences,
+        '$householdId-goal-${plan.id}-complete',
+        title: '¡Meta alcanzada!',
+        body:
+            'Completaste ${plan.name}. Tu constancia convirtió el objetivo en un logro.',
+      );
+      if (sentAlert) break;
+    }
+
+    if (!sentAlert && balances.uncoveredExpenses > 0) {
+      sentAlert = await _showOnce(
         preferences,
         '$householdId-empty-$monthKey',
         title: 'Tu saldo disponible se agotó',
         body: 'Hay gastos sin cubrir. Revisa su origen y tus próximos pagos.',
       );
     }
-    for (final plan in plans.where((item) => item.isActive)) {
-      final current = automaticPlanProgress(plan, transactions, now);
-      final progress = plan.targetMinor == 0 ? 0.0 : current / plan.targetMinor;
-      if (plan.kind == FinancePlanKind.budget &&
-          progress >= plan.alertThreshold) {
+
+    if (!sentAlert) {
+      final budgets =
+          activePlans
+              .where((item) => item.kind == FinancePlanKind.budget)
+              .toList()
+            ..sort((left, right) {
+              final leftProgress =
+                  automaticPlanProgress(left, transactions, now) /
+                  left.targetMinor;
+              final rightProgress =
+                  automaticPlanProgress(right, transactions, now) /
+                  right.targetMinor;
+              return rightProgress.compareTo(leftProgress);
+            });
+      for (final plan in budgets) {
+        final current = automaticPlanProgress(plan, transactions, now);
+        final progress = current / plan.targetMinor;
+        if (progress < plan.alertThreshold) continue;
         final level = progress >= 1 ? 'limit' : 'warning';
-        await _showOnce(
+        sentAlert = await _showOnce(
           preferences,
           '$householdId-budget-${plan.id}-$monthKey-$level',
           title:
@@ -169,25 +208,71 @@ class NotificationService {
           body:
               '${plan.name}: ${(progress * 100).round()}% utilizado este mes.',
         );
+        if (sentAlert) break;
       }
-      if (plan.kind == FinancePlanKind.goal && progress >= 1) {
-        await _showOnce(
+    }
+
+    if (!sentAlert) {
+      for (final plan in activePlans.where(
+        (item) => item.kind == FinancePlanKind.goal,
+      )) {
+        final deadline = plan.deadline;
+        if (deadline == null ||
+            deadline.difference(now).inDays > 7 ||
+            deadline.isBefore(now)) {
+          continue;
+        }
+        final progress = plan.currentMinor / plan.targetMinor;
+        sentAlert = await _showOnce(
           preferences,
-          '$householdId-goal-${plan.id}-complete',
-          title: '¡Meta alcanzada!',
-          body: 'Completaste ${plan.name}.',
-        );
-      } else if (plan.kind == FinancePlanKind.goal &&
-          plan.deadline != null &&
-          plan.deadline!.difference(now).inDays <= 7 &&
-          !plan.deadline!.isBefore(now)) {
-        await _showOnce(
-          preferences,
-          '$householdId-goal-${plan.id}-deadline-${plan.deadline!.toIso8601String()}',
+          '$householdId-goal-${plan.id}-deadline-${deadline.toIso8601String()}',
           title: 'Tu meta se acerca a la fecha límite',
           body:
               '${plan.name}: faltan ${(100 - progress * 100).clamp(0, 100).round()}%.',
         );
+        if (sentAlert) break;
+      }
+    }
+
+    // Positive reinforcement is intentionally limited to one message per
+    // type and month, and never competes with a warning in the same run.
+    if (!sentAlert) {
+      final thisMonth =
+          transactions
+              .where(
+                (item) =>
+                    item.occurredAt.year == now.year &&
+                    item.occurredAt.month == now.month,
+              )
+              .toList()
+            ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+      if (thisMonth.isNotEmpty) {
+        final latest = thisMonth.first;
+        if (latest.type == TransactionType.saving) {
+          const messages = [
+            'Separar dinero con constancia fortalece tu tranquilidad financiera.',
+            'Tu ahorro de este mes ya está registrado. Vas construyendo un buen respaldo.',
+            'Buen hábito: cada aporte hace más resistente tu economía.',
+          ];
+          await _showOnce(
+            preferences,
+            '$householdId-positive-saving-$monthKey',
+            title: 'Tu ahorro va por buen camino',
+            body: messages[now.month % messages.length],
+          );
+        } else if (latest.type == TransactionType.income) {
+          const messages = [
+            'Registrar tus ingresos mantiene el saldo y los reportes al día.',
+            'Buen trabajo: conocer lo que entra te ayuda a decidir mejor lo que sale.',
+            'Ingreso registrado. Considera reservar una parte para tu próxima meta.',
+          ];
+          await _showOnce(
+            preferences,
+            '$householdId-positive-income-$monthKey',
+            title: 'Buen control de tus ingresos',
+            body: messages[now.month % messages.length],
+          );
+        }
       }
     }
   }
@@ -211,16 +296,17 @@ class NotificationService {
     );
   }
 
-  Future<void> _showOnce(
+  Future<bool> _showOnce(
     SharedPreferences preferences,
     String key, {
     required String title,
     required String body,
   }) async {
     final storageKey = 'notification.shown.$key';
-    if (preferences.getBool(storageKey) == true) return;
+    if (preferences.getBool(storageKey) == true) return false;
     await show(title: title, body: body);
     await preferences.setBool(storageKey, true);
+    return true;
   }
 
   Future<void> _saveToken(String uid, String token) async {

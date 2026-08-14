@@ -87,10 +87,11 @@ abstract final class AppTheme {
         centerTitle: false,
       ),
       cardTheme: CardThemeData(
-        color: scheme.surface,
+        color: isLight ? scheme.surface : scheme.surfaceContainerHighest,
         elevation: 0,
         margin: EdgeInsets.zero,
-        shape: AppShapes.card(borderColor: scheme.outlineVariant),
+        clipBehavior: Clip.antiAlias,
+        shape: AppShapes.card(),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -128,7 +129,51 @@ abstract final class AppTheme {
           foregroundColor: WidgetStatePropertyAll(scheme.onPrimary),
         ),
       ),
+      chipTheme: ChipThemeData(
+        backgroundColor: scheme.surface,
+        selectedColor: scheme.primaryContainer,
+        disabledColor: scheme.surfaceContainerHighest,
+        checkmarkColor: scheme.primary,
+        labelStyle: TextStyle(
+          color: scheme.onSurface,
+          fontWeight: FontWeight.w700,
+        ),
+        secondaryLabelStyle: TextStyle(
+          color: scheme.onPrimaryContainer,
+          fontWeight: FontWeight.w800,
+        ),
+        side: BorderSide.none,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          backgroundColor: WidgetStateProperty.resolveWith(
+            (states) =>
+                states.contains(WidgetState.selected)
+                    ? scheme.primaryContainer
+                    : scheme.surface,
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (states) =>
+                states.contains(WidgetState.selected)
+                    ? scheme.onPrimaryContainer
+                    : scheme.onSurfaceVariant,
+          ),
+          iconColor: WidgetStateProperty.resolveWith(
+            (states) =>
+                states.contains(WidgetState.selected)
+                    ? scheme.primary
+                    : scheme.onSurfaceVariant,
+          ),
+          side: WidgetStatePropertyAll(BorderSide(color: scheme.outline)),
+          textStyle: const WidgetStatePropertyAll(
+            TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      ),
       navigationBarTheme: NavigationBarThemeData(
+        height: 72,
         backgroundColor: scheme.surface,
         indicatorColor: scheme.primaryContainer,
         iconTheme: WidgetStateProperty.resolveWith((states) {
@@ -145,7 +190,9 @@ abstract final class AppTheme {
                 states.contains(WidgetState.selected)
                     ? scheme.primary
                     : scheme.onSurfaceVariant,
-            fontSize: 12,
+            fontSize: 10.5,
+            height: 1,
+            letterSpacing: 0,
             fontWeight: FontWeight.w600,
           );
         }),

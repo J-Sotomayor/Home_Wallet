@@ -139,17 +139,36 @@ class TransactionCsvService {
     return result;
   }
 
-  Uint8List exportBytes(List<FinanceTransaction> transactions) {
+  Uint8List exportBytes(
+    List<FinanceTransaction> transactions, {
+    Map<String, String> memberNames = const {},
+  }) {
+    final includeMember = memberNames.isNotEmpty;
     final buffer = StringBuffer(
-      '\ufeffFecha,Tipo,Categoría,Descripción,Monto\r\n',
+      includeMember
+          ? '\ufeffIntegrante,Fecha,Tipo,Categoría,Descripción,Monto\r\n'
+          : '\ufeffFecha,Tipo,Categoría,Descripción,Monto\r\n',
     );
-    for (final transaction in transactions) {
+    final ordered = [...transactions]..sort((left, right) {
+      if (includeMember) {
+        final byMember = (memberNames[left.createdBy] ?? 'Integrante')
+            .compareTo(memberNames[right.createdBy] ?? 'Integrante');
+        if (byMember != 0) return byMember;
+      }
+      return left.occurredAt.compareTo(right.occurredAt);
+    });
+    for (final transaction in ordered) {
       final date = transaction.occurredAt.toIso8601String().split('T').first;
       final type = switch (transaction.type) {
         TransactionType.income => 'Ingreso',
         TransactionType.expense => 'Gasto',
         TransactionType.saving => 'Ahorro',
       };
+      if (includeMember) {
+        buffer
+          ..write(_quote(memberNames[transaction.createdBy] ?? 'Integrante'))
+          ..write(',');
+      }
       buffer
         ..write(_quote(date))
         ..write(',')

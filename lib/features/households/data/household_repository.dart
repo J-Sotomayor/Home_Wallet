@@ -36,6 +36,10 @@ abstract interface class HouseholdRepository {
   });
   Future<void> leaveHousehold(String householdId);
   Future<void> setActiveHousehold(String uid, String householdId);
+  Future<void> updateHouseholdKind({
+    required String householdId,
+    required HouseholdKind kind,
+  });
   Future<void> updateMemberDisplayName({
     required String householdId,
     required String uid,
@@ -104,7 +108,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
           name: clear['name'] as String? ?? 'Mi hogar',
           memberCount: (data['memberCount'] as num?)?.toInt() ?? 1,
           role: member.data()?['role'] as String? ?? 'member',
-          kind: HouseholdKind.parse(data['kind']),
+          kind: HouseholdKind.parse(clear['kind'] ?? data['kind']),
         );
       });
 
@@ -168,7 +172,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       final key = await _crypto.generateKey();
       await _keyStore.writeHouseholdKey(householdId, key);
       final householdPayload = await _crypto.encryptJson(
-        value: {'name': cleanName},
+        value: {'name': cleanName, 'kind': kind.name},
         keyBytes: key,
         context: 'households/$householdId',
       );
@@ -196,6 +200,43 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       await batch.commit();
       await setActiveHousehold(user.uid, householdId);
       return householdId;
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
+  Future<void> updateHouseholdKind({
+    required String householdId,
+    required HouseholdKind kind,
+  }) async {
+    try {
+      final reference = _firestore.collection('households').doc(householdId);
+      final snapshot = await reference.get();
+      if (!snapshot.exists) {
+        throw const AppException('El hogar ya no existe.');
+      }
+      final data = snapshot.data()!;
+      final key = await _requireKey(householdId);
+      final payload = _asMap(data['privatePayload']);
+      final clear =
+          payload.isEmpty
+              ? <String, dynamic>{}
+              : await _crypto.decryptJson(
+                payload: payload,
+                keyBytes: key,
+                context: 'households/$householdId',
+              );
+      clear['kind'] = kind.name;
+      final encrypted = await _crypto.encryptJson(
+        value: clear,
+        keyBytes: key,
+        context: 'households/$householdId',
+      );
+      await reference.update({
+        'privatePayload': encrypted,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     } catch (error) {
       throw mapFirebaseError(error);
     }

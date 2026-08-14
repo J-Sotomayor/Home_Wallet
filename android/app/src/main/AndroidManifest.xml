@@ -21,6 +21,12 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="homewallet_smart_alerts" />
+        <!-- Skia is kept for broad compatibility with older Mali/PowerVR GPUs.
+             Some vendor drivers draw duplicated rounded ShapeBorder strokes
+             with Impeller in bottom sheets. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

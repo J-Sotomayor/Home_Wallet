@@ -7,7 +7,9 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app/services/app_services.dart';
 import 'app/theme/app_theme.dart';
@@ -24,6 +26,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _rememberFirstLaunch();
   Object? startupError;
   StackTrace? startupStack;
   AppServices? services;
@@ -78,6 +81,22 @@ Future<void> main() async {
   );
 }
 
+const appFirstLaunchPreferenceKey = 'homewallet.first_launch_at.v1';
+
+Future<void> _rememberFirstLaunch() async {
+  try {
+    final preferences = await SharedPreferences.getInstance();
+    if (!preferences.containsKey(appFirstLaunchPreferenceKey)) {
+      await preferences.setString(
+        appFirstLaunchPreferenceKey,
+        DateTime.now().toIso8601String(),
+      );
+    }
+  } catch (_) {
+    // La fecha mejora el filtro local, pero nunca debe impedir abrir la app.
+  }
+}
+
 class HomeWalletApp extends StatefulWidget {
   const HomeWalletApp({
     super.key,
@@ -123,6 +142,21 @@ class _HomeWalletAppState extends State<HomeWalletApp> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
+      builder: (context, child) {
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        return AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+            statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+            systemNavigationBarColor: Theme.of(context).colorScheme.surface,
+            systemNavigationBarIconBrightness:
+                dark ? Brightness.light : Brightness.dark,
+            systemNavigationBarDividerColor: Colors.transparent,
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: widget.themeController.themeMode,

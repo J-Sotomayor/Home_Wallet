@@ -55,15 +55,31 @@ class BiometricLockService {
 
   final SecureKeyStore _keyStore;
   final DeviceAuthenticator _authenticator;
+  static const _settingsChannel = MethodChannel(
+    'com.homewallet.app/device_security',
+  );
 
   Future<bool> isAvailable() => _authenticator.isSupported();
 
   Future<bool> isEnabled(String uid) async {
     final preference = await _keyStore.readBiometricPreference(uid);
-    if (preference != null) return preference;
-    final supported = await isAvailable();
-    if (supported) await _keyStore.writeBiometricPreference(uid, true);
-    return supported;
+    return preference ?? false;
+  }
+
+  Future<void> openEnrollmentSettings() async {
+    if (kIsWeb) {
+      throw const AppException(
+        'Configura la seguridad desde los ajustes de tu dispositivo.',
+      );
+    }
+    try {
+      await _settingsChannel.invokeMethod<void>('openEnrollmentSettings');
+    } on PlatformException catch (error) {
+      throw AppException(
+        'No fue posible abrir los ajustes de seguridad.',
+        code: error.code,
+      );
+    }
   }
 
   Future<void> setEnabled(String uid, bool enabled) async {

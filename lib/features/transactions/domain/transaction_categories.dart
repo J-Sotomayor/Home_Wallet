@@ -63,9 +63,18 @@ abstract final class TransactionCategories {
     String description,
   ) {
     final values = forType(type);
+    final cleanCategory = category.trim();
     const legacyOther = {'Otros gastos', 'Otros ingresos', 'Otros ahorros'};
-    if (legacyOther.contains(category)) return suggestFor(type, description);
-    if (values.contains(category) && category != 'Otro') return category;
+    if (legacyOther.contains(cleanCategory) || cleanCategory.isEmpty) {
+      return suggestFor(type, description);
+    }
+    if (values.contains(cleanCategory) && cleanCategory != 'Otro') {
+      return cleanCategory;
+    }
+    // Categories created by the household are valid even though they are not
+    // part of the built-in catalog. Previously they were rewritten as “Otro”
+    // every time the encrypted transaction was read.
+    if (cleanCategory != 'Otro') return cleanCategory;
     return suggestFor(type, description);
   }
 

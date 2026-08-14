@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +9,7 @@ import '../../../app/services/app_services.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_shapes.dart';
 import '../../../app/theme/theme_controller.dart';
+import '../../../app/widgets/app_page_header.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../about/presentation/about_homewallet_screen.dart';
 import '../../auth/data/auth_repository.dart';
@@ -18,6 +20,7 @@ import '../../legal/presentation/legal_screen.dart';
 import '../../onboarding/presentation/app_tutorial_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
 import '../../transactions/domain/transaction_categories.dart';
+import '../../transactions/domain/financial_guidance.dart';
 import '../../transactions/domain/finance_balances.dart';
 import '../../transactions/domain/finance_models.dart';
 import '../../transactions/presentation/data_tools_screen.dart';
@@ -49,6 +52,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
   bool _tutorialQueued = false;
+  final _transactionsKey = GlobalKey<_TransactionsTabState>();
 
   @override
   void initState() {
@@ -90,15 +94,16 @@ class _HomeShellState extends State<HomeShell> {
             user: widget.user,
             householdId: widget.householdId,
             services: widget.services,
-            onAdd: () => _showTransactionForm(context),
-            onAddType:
-                (type) => _showTransactionForm(context, initialType: type),
+            onImportCompleted: _showImportedTransactions,
+            onImportCommitted: () => unawaited(_evaluateSmartAlerts()),
             onOpenTransactions: () => setState(() => _index = 1),
             onOpenPlans: () => setState(() => _index = 4),
-            onOpenProfile: _openProfile,
+            onOpenSavings: () => setState(() => _index = 3),
+            onOpenProfile: () => _openSettings(household),
             canContribute: canContribute,
           ),
           _TransactionsTab(
+            key: _transactionsKey,
             user: widget.user,
             householdId: widget.householdId,
             services: widget.services,
@@ -114,6 +119,9 @@ class _HomeShellState extends State<HomeShell> {
             members: widget.services.households.watchMembers(
               widget.householdId,
             ),
+            currentUid: widget.user.uid,
+            currentUserName: widget.user.displayName,
+            householdKind: household.kind,
           ),
           SavingsScreen(
             householdId: widget.householdId,
@@ -145,13 +153,6 @@ class _HomeShellState extends State<HomeShell> {
                   initialCategory: plan.category,
                 ),
           ),
-          _ProfileTab(
-            user: widget.user,
-            householdId: widget.householdId,
-            services: widget.services,
-            themeController: widget.themeController,
-            household: household,
-          ),
         ];
 
         return Scaffold(
@@ -160,8 +161,8 @@ class _HomeShellState extends State<HomeShell> {
               canContribute && _index == 1
                   ? FloatingActionButton.extended(
                     onPressed: () => _showTransactionForm(context),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Movimiento'),
+                    icon: const Icon(Icons.add_circle_outline),
+                    label: const Text('Registrar'),
                   )
                   : null,
           bottomNavigationBar: NavigationBar(
@@ -177,7 +178,7 @@ class _HomeShellState extends State<HomeShell> {
               NavigationDestination(
                 icon: Icon(Icons.receipt_long_outlined),
                 selectedIcon: Icon(Icons.receipt_long),
-                label: 'Movimientos',
+                label: 'Movs.',
               ),
               NavigationDestination(
                 icon: Icon(Icons.query_stats_outlined),
@@ -193,11 +194,6 @@ class _HomeShellState extends State<HomeShell> {
                 icon: Icon(Icons.flag_outlined),
                 selectedIcon: Icon(Icons.flag),
                 label: 'Planes',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.person_outline),
-                selectedIcon: Icon(Icons.person),
-                label: 'Perfil',
               ),
             ],
           ),
@@ -261,7 +257,7 @@ class _HomeShellState extends State<HomeShell> {
         );
         _showMessage(
           input.linkedPlan == null
-              ? 'Movimiento cifrado y guardado.'
+              ? 'Movimiento cifrado y guardado. ${input.guidance.title}'
               : '${input.linkedPlan!.name}: avance actualizado con ${_money(input.amountMinor)}.',
         );
       } else {
@@ -327,7 +323,7 @@ class _HomeShellState extends State<HomeShell> {
         householdId: widget.householdId,
         transactions:
             (values[0] as List<FinanceTransaction>)
-                .where((transaction) => !transaction.shared)
+                .where((transaction) => transaction.countsInHouseholdFinances)
                 .toList(),
         plans: values[1] as List<FinancePlan>,
       );
@@ -336,16 +332,28 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  void _openProfile() {
+  void _openSettings(Household household) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder:
-            (_) => ProfileScreen(
-              user: widget.user,
-              householdId: widget.householdId,
-              services: widget.services,
+            (_) => Scaffold(
+              appBar: AppBar(title: const Text('Configuración')),
+              body: _ProfileTab(
+                user: widget.user,
+                householdId: widget.householdId,
+                services: widget.services,
+                themeController: widget.themeController,
+                household: household,
+              ),
             ),
       ),
+    );
+  }
+
+  void _showImportedTransactions() {
+    setState(() => _index = 1);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _transactionsKey.currentState?.showImportedOnly(),
     );
   }
 
@@ -362,10 +370,11 @@ class _DashboardTab extends StatelessWidget {
     required this.user,
     required this.householdId,
     required this.services,
-    required this.onAdd,
-    required this.onAddType,
+    required this.onImportCompleted,
+    required this.onImportCommitted,
     required this.onOpenTransactions,
     required this.onOpenPlans,
+    required this.onOpenSavings,
     required this.onOpenProfile,
     required this.canContribute,
   });
@@ -373,10 +382,11 @@ class _DashboardTab extends StatelessWidget {
   final AuthUser user;
   final String householdId;
   final AppServices services;
-  final VoidCallback onAdd;
-  final ValueChanged<TransactionType> onAddType;
+  final VoidCallback onImportCompleted;
+  final VoidCallback onImportCommitted;
   final VoidCallback onOpenTransactions;
   final VoidCallback onOpenPlans;
+  final VoidCallback onOpenSavings;
   final VoidCallback onOpenProfile;
   final bool canContribute;
 
@@ -402,7 +412,9 @@ class _DashboardTab extends StatelessWidget {
               final household = householdSnapshot.data!;
               final transactions =
                   transactionSnapshot.data!
-                      .where((transaction) => !transaction.shared)
+                      .where(
+                        (transaction) => transaction.countsInHouseholdFinances,
+                      )
                       .toList();
               return StreamBuilder<List<FinancePlan>>(
                 stream: services.finance.watchPlans(householdId),
@@ -416,11 +428,12 @@ class _DashboardTab extends StatelessWidget {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final plans = planSnapshot.data!;
+                  final now = DateTime.now();
                   final balances = FinanceBalances.calculate(
                     transactions,
                     plans,
+                    currentPeriod: now,
                   );
-                  final now = DateTime.now();
                   final monthlyTransactions =
                       transactions
                           .where(
@@ -429,111 +442,134 @@ class _DashboardTab extends StatelessWidget {
                                 item.occurredAt.month == now.month,
                           )
                           .toList();
-                  return RefreshIndicator(
-                    onRefresh: () async {
-                      await Future<void>.delayed(
-                        const Duration(milliseconds: 350),
+                  return StreamBuilder<List<RecurringTransaction>>(
+                    stream: services.finance.watchRecurring(householdId),
+                    builder: (context, recurringSnapshot) {
+                      return StreamBuilder<List<SharedExpense>>(
+                        stream: services.finance.watchSharedExpenses(
+                          householdId,
+                        ),
+                        builder: (context, sharedSnapshot) {
+                          final activities = _dashboardActivities(
+                            transactions: transactions,
+                            recurring:
+                                recurringSnapshot.data ??
+                                const <RecurringTransaction>[],
+                            shared:
+                                sharedSnapshot.data ?? const <SharedExpense>[],
+                          );
+                          return RefreshIndicator(
+                            onRefresh: () async {
+                              await Future<void>.delayed(
+                                const Duration(milliseconds: 350),
+                              );
+                            },
+                            child: ListView(
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                20,
+                                20,
+                                110,
+                              ),
+                              children: [
+                                _DashboardHeader(
+                                  user: user,
+                                  household: household,
+                                  onOpenProfile: onOpenProfile,
+                                ),
+                                const SizedBox(height: 18),
+                                _AvailableBalanceCard(
+                                  balances: balances,
+                                  monthlyTransactions: monthlyTransactions,
+                                ),
+                                if (balances.uncoveredExpenses > 0) ...[
+                                  const SizedBox(height: 12),
+                                  Card(
+                                    color:
+                                        Theme.of(
+                                          context,
+                                        ).colorScheme.errorContainer,
+                                    child: ListTile(
+                                      leading: Icon(
+                                        Icons.warning_amber_rounded,
+                                        color:
+                                            Theme.of(context).colorScheme.error,
+                                      ),
+                                      title: const Text(
+                                        'Tus gastos agotaron el disponible',
+                                      ),
+                                      subtitle: Text(
+                                        'Faltan ${_money(balances.uncoveredExpenses)} por cubrir. Registra el origen real o reduce gastos.',
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 14),
+                                _HomeEssentialActions(
+                                  canContribute: household.canContribute,
+                                  canManage: household.canManage,
+                                  onOpenRecurring:
+                                      () => _openRecurring(context),
+                                  onOpenSharedExpenses:
+                                      () => _openSharedExpenses(context),
+                                  onOpenImport: () => _openImport(context),
+                                  onOpenTransactions: onOpenTransactions,
+                                  onOpenSavings: onOpenSavings,
+                                  onOpenFamily:
+                                      household.canManage
+                                          ? () => _openInvite(context)
+                                          : () =>
+                                              _openMembers(context, household),
+                                ),
+                                const SizedBox(height: 14),
+                                FinanceInsights(transactions: transactions),
+                                const SizedBox(height: 14),
+                                _DashboardPlansSnapshot(
+                                  plans: plans,
+                                  transactions: transactions,
+                                  onOpenPlans: onOpenPlans,
+                                ),
+                                const SizedBox(height: 24),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'Actividad reciente',
+                                        style:
+                                            Theme.of(
+                                              context,
+                                            ).textTheme.titleLarge,
+                                      ),
+                                    ),
+                                    if (activities.length > 3)
+                                      TextButton(
+                                        onPressed:
+                                            () => _showAllActivities(
+                                              context,
+                                              activities,
+                                            ),
+                                        child: const Text('Mostrar más'),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                if (activities.isEmpty)
+                                  _EmptyState(
+                                    icon: Icons.history_toggle_off_outlined,
+                                    title: 'Aún no hay actividad',
+                                    description:
+                                        'Aquí verás acciones importantes, como programaciones, divisiones e importaciones.',
+                                  )
+                                else
+                                  ...activities
+                                      .take(3)
+                                      .map(_RecentActivityTile.new),
+                              ],
+                            ),
+                          );
+                        },
                       );
                     },
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
-                      children: [
-                        _DashboardHeader(
-                          user: user,
-                          household: household,
-                          onOpenProfile: onOpenProfile,
-                        ),
-                        const SizedBox(height: 18),
-                        _AvailableBalanceCard(
-                          balances: balances,
-                          monthlyTransactions: monthlyTransactions,
-                        ),
-                        if (balances.uncoveredExpenses > 0) ...[
-                          const SizedBox(height: 12),
-                          Card(
-                            color: Theme.of(context).colorScheme.errorContainer,
-                            child: ListTile(
-                              leading: Icon(
-                                Icons.warning_amber_rounded,
-                                color: Theme.of(context).colorScheme.error,
-                              ),
-                              title: const Text(
-                                'Tus gastos agotaron el disponible',
-                              ),
-                              subtitle: Text(
-                                'Faltan ${_money(balances.uncoveredExpenses)} por cubrir. Registra el origen real o reduce gastos.',
-                              ),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 14),
-                        _QuickMovementActions(
-                          enabled: canContribute,
-                          onSelected: onAddType,
-                        ),
-                        const SizedBox(height: 14),
-                        _HomeEssentialActions(
-                          canContribute: household.canContribute,
-                          canManage: household.canManage,
-                          onOpenRecurring: () => _openRecurring(context),
-                          onOpenSharedExpenses:
-                              () => _openSharedExpenses(context),
-                          onOpenImport: () => _openImport(context),
-                          onOpenFamily:
-                              household.canManage
-                                  ? () => _openInvite(context)
-                                  : () => _openMembers(context, household),
-                        ),
-                        const SizedBox(height: 14),
-                        _DashboardGuidance(
-                          balances: balances,
-                          monthlyTransactions: monthlyTransactions,
-                          canContribute: canContribute,
-                          onAddType: onAddType,
-                        ),
-                        const SizedBox(height: 14),
-                        FinanceInsights(transactions: transactions),
-                        const SizedBox(height: 14),
-                        _DashboardPlansSnapshot(
-                          plans: plans,
-                          transactions: transactions,
-                          onOpenPlans: onOpenPlans,
-                        ),
-                        const SizedBox(height: 24),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Actividad reciente',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: onOpenTransactions,
-                              child: const Text('Ver todos'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        if (transactions.isEmpty)
-                          _EmptyState(
-                            icon: Icons.receipt_long_outlined,
-                            title: 'Aún no hay movimientos',
-                            description:
-                                'El hogar inicia vacío. Agrega tu primer ingreso o gasto real.',
-                            actionLabel:
-                                canContribute ? 'Agregar movimiento' : null,
-                            onAction: canContribute ? onAdd : null,
-                          )
-                        else
-                          ...transactions
-                              .take(5)
-                              .map(
-                                (transaction) =>
-                                    _TransactionTile(transaction: transaction),
-                              ),
-                      ],
-                    ),
                   );
                 },
               );
@@ -541,6 +577,44 @@ class _DashboardTab extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+
+  void _showAllActivities(
+    BuildContext context,
+    List<_DashboardActivity> activities,
+  ) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder:
+          (context) => SafeArea(
+            child: FractionallySizedBox(
+              heightFactor: .78,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                    child: Text(
+                      'Actividad del hogar',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      itemCount: activities.length,
+                      itemBuilder:
+                          (context, index) =>
+                              _RecentActivityTile(activities[index]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
     );
   }
 
@@ -573,18 +647,20 @@ class _DashboardTab extends StatelessWidget {
     );
   }
 
-  void _openImport(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
+  Future<void> _openImport(BuildContext context) async {
+    final imported = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
         builder:
             (_) => DataToolsScreen(
               user: user,
               householdId: householdId,
               services: services,
               canImport: canContribute,
+              onImportCommitted: onImportCommitted,
             ),
       ),
     );
+    if (imported == true) onImportCompleted();
   }
 
   void _openInvite(BuildContext context) {
@@ -613,6 +689,97 @@ class _DashboardTab extends StatelessWidget {
   }
 }
 
+class _DashboardActivity {
+  const _DashboardActivity({
+    required this.title,
+    required this.detail,
+    required this.date,
+    required this.icon,
+  });
+
+  final String title;
+  final String detail;
+  final DateTime date;
+  final IconData icon;
+}
+
+List<_DashboardActivity> _dashboardActivities({
+  required List<FinanceTransaction> transactions,
+  required List<RecurringTransaction> recurring,
+  required List<SharedExpense> shared,
+}) {
+  final activities = <_DashboardActivity>[];
+  for (final item in recurring) {
+    final typeLabel = switch (item.template.type) {
+      TransactionType.income => 'un ingreso',
+      TransactionType.expense => 'un pago',
+      TransactionType.saving => 'un ahorro',
+    };
+    activities.add(
+      _DashboardActivity(
+        title: 'Se programó $typeLabel',
+        detail:
+            '${item.template.description} · Próximo ${DateFormat('dd/MM/yyyy').format(item.nextDueAt)}',
+        date: item.nextDueAt,
+        icon: Icons.event_repeat_outlined,
+      ),
+    );
+  }
+  for (final item in shared) {
+    activities.add(
+      _DashboardActivity(
+        title: 'Se dividió un gasto',
+        detail: '${item.description} · ${_money(item.totalMinor)}',
+        date: item.occurredAt,
+        icon: Icons.call_split_outlined,
+      ),
+    );
+  }
+  final importsBySource = <String, List<FinanceTransaction>>{};
+  for (final item in transactions.where(
+    (transaction) => transaction.origin == TransactionOrigin.imported,
+  )) {
+    importsBySource
+        .putIfAbsent(item.sourceName ?? 'Archivo bancario', () => [])
+        .add(item);
+  }
+  for (final entry in importsBySource.entries) {
+    final latest = entry.value
+        .map((item) => item.occurredAt)
+        .reduce((left, right) => left.isAfter(right) ? left : right);
+    activities.add(
+      _DashboardActivity(
+        title: 'Se importó un estado de cuenta',
+        detail:
+            '${entry.key} · ${entry.value.length} ${entry.value.length == 1 ? 'movimiento' : 'movimientos'}',
+        date: latest,
+        icon: Icons.account_balance_outlined,
+      ),
+    );
+  }
+  activities.sort((left, right) => right.date.compareTo(left.date));
+  return activities;
+}
+
+class _RecentActivityTile extends StatelessWidget {
+  const _RecentActivityTile(this.activity);
+
+  final _DashboardActivity activity;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: const EdgeInsets.only(bottom: 8),
+    child: ListTile(
+      leading: CircleAvatar(child: Icon(activity.icon, size: 20)),
+      title: Text(
+        activity.title,
+        style: const TextStyle(fontWeight: FontWeight.w800),
+      ),
+      subtitle: Text(activity.detail),
+    ),
+  );
+}
+
 class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader({
     required this.user,
@@ -637,6 +804,12 @@ class _DashboardHeader extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        CircleAvatar(
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+          foregroundColor: Theme.of(context).colorScheme.primary,
+          child: const Icon(Icons.home_outlined),
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -649,7 +822,7 @@ class _DashboardHeader extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                '${household.name} · ${household.roleType.label}',
+                '${household.name} · ${household.kind.label} · ${household.roleType.label}',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               const SizedBox(height: 2),
@@ -698,100 +871,200 @@ class _AvailableBalanceCard extends StatelessWidget {
     final monthlyIncome = _monthly(TransactionType.income);
     final monthlyExpenses = _monthly(TransactionType.expense);
     final reserved = balances.savings + balances.goals;
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primaryBlue, AppColors.primaryBlueDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: AppShapes.extraLargeRadius,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
+    return Semantics(
+      button: true,
+      label: 'Ver cómo se calcula el dinero disponible',
+      child: GestureDetector(
+        key: const Key('available_balance_card'),
+        onTap: () => _showBreakdown(context, reserved),
+        child: Container(
+          padding: const EdgeInsets.all(22),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [AppColors.primaryBlue, AppColors.primaryBlueDark],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: AppShapes.extraLargeRadius,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                Icons.account_balance_wallet_outlined,
-                color: Colors.white70,
+              const Row(
+                children: [
+                  Icon(
+                    Icons.account_balance_wallet_outlined,
+                    color: Colors.white70,
+                  ),
+                  SizedBox(width: 7),
+                  Text(
+                    'Disponible para usar',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                  Spacer(),
+                  Text(
+                    'Ver detalle',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  SizedBox(width: 3),
+                  Icon(Icons.chevron_right, color: Colors.white70, size: 18),
+                ],
               ),
-              SizedBox(width: 7),
+              const SizedBox(height: 7),
               Text(
-                'Disponible para usar',
-                style: TextStyle(color: Colors.white70),
+                _money(balances.available),
+                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                reserved == 0
+                    ? 'Todavía no has separado dinero para ahorros o metas.'
+                    : '${_money(reserved)} están protegidos en ahorros y metas.',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(13),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .11),
+                  borderRadius: AppShapes.largeRadius,
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _BalanceCardMetric(
+                            label: 'Total ingresado',
+                            value: balances.income,
+                            icon: Icons.arrow_downward,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _BalanceCardMetric(
+                            label: 'Dinero separado',
+                            value: reserved,
+                            icon: Icons.shield_outlined,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Colors.white24, height: 22),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Este mes entró ${_money(monthlyIncome)}',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                        Text(
+                          'Salió ${_money(monthlyExpenses)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 7),
-          Text(
-            _money(balances.available),
-            style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            reserved == 0
-                ? 'Todavía no has separado dinero para ahorros o metas.'
-                : '${_money(reserved)} están protegidos en ahorros y metas.',
-            style: const TextStyle(color: Colors.white70),
-          ),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .11),
-              borderRadius: AppShapes.largeRadius,
-            ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _BalanceCardMetric(
-                        label: 'Total ingresado',
-                        value: balances.income,
-                        icon: Icons.arrow_downward,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _BalanceCardMetric(
-                        label: 'Dinero separado',
-                        value: reserved,
-                        icon: Icons.shield_outlined,
-                      ),
-                    ),
-                  ],
-                ),
-                const Divider(color: Colors.white24, height: 22),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Este mes entró ${_money(monthlyIncome)}',
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ),
-                    Text(
-                      'Salió ${_money(monthlyExpenses)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
+
+  void _showBreakdown(BuildContext context, int reserved) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (context) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tu dinero disponible',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Es el dinero que queda después de restar pagos, ahorros y aportes a metas de los ingresos registrados.',
+                  ),
+                  const SizedBox(height: 18),
+                  _BalanceBreakdownRow(
+                    label: 'Ingresos registrados',
+                    value: balances.income,
+                    icon: Icons.add_circle_outline,
+                  ),
+                  _BalanceBreakdownRow(
+                    label: 'Pagos y compras',
+                    value: -balances.expenses,
+                    icon: Icons.remove_circle_outline,
+                  ),
+                  _BalanceBreakdownRow(
+                    label: 'Dinero separado',
+                    value: -reserved,
+                    icon: Icons.savings_outlined,
+                  ),
+                  const Divider(height: 24),
+                  _BalanceBreakdownRow(
+                    label: 'Disponible para usar',
+                    value: balances.available,
+                    icon: Icons.account_balance_wallet_outlined,
+                    emphasized: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+  }
+}
+
+class _BalanceBreakdownRow extends StatelessWidget {
+  const _BalanceBreakdownRow({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.emphasized = false,
+  });
+
+  final String label;
+  final int value;
+  final IconData icon;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 6),
+    child: Row(
+      children: [
+        Icon(icon, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(fontWeight: emphasized ? FontWeight.w900 : null),
+          ),
+        ),
+        Text(
+          _money(value),
+          style: TextStyle(fontWeight: emphasized ? FontWeight.w900 : null),
+        ),
+      ],
+    ),
+  );
 }
 
 class _BalanceCardMetric extends StatelessWidget {
@@ -834,112 +1107,15 @@ class _BalanceCardMetric extends StatelessWidget {
   );
 }
 
-class _QuickMovementActions extends StatelessWidget {
-  const _QuickMovementActions({
-    required this.enabled,
-    required this.onSelected,
-  });
-
-  final bool enabled;
-  final ValueChanged<TransactionType> onSelected;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(15),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            enabled ? '¿Qué quieres registrar?' : 'Acciones del hogar',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 11),
-          Row(
-            children: [
-              Expanded(
-                child: _QuickMovementButton(
-                  key: const Key('dashboard_add_expense'),
-                  label: 'Gasto',
-                  icon: Icons.arrow_upward,
-                  enabled: enabled,
-                  onTap: () => onSelected(TransactionType.expense),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _QuickMovementButton(
-                  key: const Key('dashboard_add_income'),
-                  label: 'Ingreso',
-                  icon: Icons.arrow_downward,
-                  enabled: enabled,
-                  onTap: () => onSelected(TransactionType.income),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _QuickMovementButton(
-                  key: const Key('dashboard_add_saving'),
-                  label: 'Ahorrar',
-                  icon: Icons.savings_outlined,
-                  enabled: enabled,
-                  onTap: () => onSelected(TransactionType.saving),
-                ),
-              ),
-            ],
-          ),
-          if (!enabled) ...[
-            const SizedBox(height: 9),
-            const Text(
-              'Tu rol es de consulta. Un adulto administra los movimientos.',
-            ),
-          ],
-        ],
-      ),
-    ),
-  );
-}
-
-class _QuickMovementButton extends StatelessWidget {
-  const _QuickMovementButton({
-    super.key,
-    required this.label,
-    required this.icon,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => FilledButton.tonal(
-    onPressed: enabled ? onTap : null,
-    style: FilledButton.styleFrom(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 13),
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 20),
-        const SizedBox(height: 4),
-        Text(label, maxLines: 1),
-      ],
-    ),
-  );
-}
-
-class _HomeEssentialActions extends StatelessWidget {
+class _HomeEssentialActions extends StatefulWidget {
   const _HomeEssentialActions({
     required this.canContribute,
     required this.canManage,
     required this.onOpenRecurring,
     required this.onOpenSharedExpenses,
     required this.onOpenImport,
+    required this.onOpenTransactions,
+    required this.onOpenSavings,
     required this.onOpenFamily,
   });
 
@@ -948,10 +1124,78 @@ class _HomeEssentialActions extends StatelessWidget {
   final VoidCallback onOpenRecurring;
   final VoidCallback onOpenSharedExpenses;
   final VoidCallback onOpenImport;
+  final VoidCallback onOpenTransactions;
+  final VoidCallback onOpenSavings;
   final VoidCallback onOpenFamily;
 
   @override
+  State<_HomeEssentialActions> createState() => _HomeEssentialActionsState();
+}
+
+class _HomeEssentialActionsState extends State<_HomeEssentialActions> {
+  final _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final actions = <Widget>[
+      _HomeToolButton(
+        key: const Key('dashboard_open_records'),
+        icon: Icons.add_card_outlined,
+        title: 'Registrar dinero',
+        description: 'Ingreso, pago o ahorro',
+        enabled: widget.canContribute,
+        onTap: widget.onOpenTransactions,
+      ),
+      _HomeToolButton(
+        key: const Key('dashboard_add_saving'),
+        icon: Icons.savings_outlined,
+        title: 'Ahorros',
+        description: 'Consulta y administra lo separado',
+        onTap: widget.onOpenSavings,
+      ),
+      _HomeToolButton(
+        key: const Key('home_tool_recurring'),
+        icon: Icons.event_repeat_outlined,
+        title: 'Programar',
+        description: 'Pagos e ingresos repetitivos',
+        onTap: widget.onOpenRecurring,
+      ),
+      _HomeToolButton(
+        key: const Key('home_tool_shared'),
+        icon: Icons.call_split_outlined,
+        title: 'Dividir gasto',
+        description: 'Calcula cuánto paga cada persona',
+        onTap: widget.onOpenSharedExpenses,
+      ),
+      _HomeToolButton(
+        key: const Key('home_tool_import'),
+        icon: Icons.upload_file_outlined,
+        title: 'Importar',
+        description:
+            widget.canContribute
+                ? 'Carga un estado de cuenta'
+                : 'Disponible para adultos',
+        onTap: widget.onOpenImport,
+      ),
+      _HomeToolButton(
+        key: const Key('home_tool_family'),
+        icon: widget.canManage ? Icons.qr_code_2 : Icons.family_restroom,
+        title: widget.canManage ? 'Invitar' : 'Mi familia',
+        description:
+            widget.canManage
+                ? 'Agrega un integrante con QR'
+                : 'Consulta quién integra el hogar',
+        onTap: widget.onOpenFamily,
+      ),
+    ];
+    final pageCount = (actions.length / 4).ceil();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(15),
@@ -966,59 +1210,90 @@ class _HomeEssentialActions extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              canContribute
+              widget.canContribute
                   ? 'Herramientas frecuentes de tu hogar.'
                   : 'Consulta las herramientas disponibles para tu rol.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 13),
-            GridView.count(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisCount: 2,
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: 1.28,
+            SizedBox(
+              height: 276,
+              child: PageView.builder(
+                key: const Key('home_actions_carousel'),
+                controller: _controller,
+                itemCount: pageCount,
+                onPageChanged: (value) => setState(() => _page = value),
+                itemBuilder: (context, pageIndex) {
+                  final start = pageIndex * 4;
+                  final end = math.min(start + 4, actions.length);
+                  return GridView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          mainAxisExtent: 128,
+                        ),
+                    itemCount: end - start,
+                    itemBuilder: (context, index) => actions[start + index],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
               children: [
-                _HomeToolButton(
-                  key: const Key('home_tool_recurring'),
-                  icon: Icons.event_repeat_outlined,
-                  title: 'Programar',
-                  description: 'Pagos e ingresos repetitivos',
-                  onTap: onOpenRecurring,
+                IconButton(
+                  tooltip: 'Página anterior',
+                  onPressed: _page == 0 ? null : () => _goToPage(_page - 1),
+                  icon: const Icon(Icons.chevron_left),
                 ),
-                _HomeToolButton(
-                  key: const Key('home_tool_shared'),
-                  icon: Icons.call_split_outlined,
-                  title: 'Dividir gasto',
-                  description: 'Calcula cuánto paga cada persona',
-                  onTap: onOpenSharedExpenses,
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var index = 0; index < pageCount; index++)
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          width: index == _page ? 22 : 8,
+                          height: 8,
+                          margin: const EdgeInsets.symmetric(horizontal: 3),
+                          decoration: BoxDecoration(
+                            color:
+                                index == _page
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(
+                                      context,
+                                    ).colorScheme.outlineVariant,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-                _HomeToolButton(
-                  key: const Key('home_tool_import'),
-                  icon: Icons.upload_file_outlined,
-                  title: 'Importar',
-                  description:
-                      canContribute
-                          ? 'Carga un estado de cuenta'
-                          : 'Disponible para adultos',
-                  onTap: onOpenImport,
-                ),
-                _HomeToolButton(
-                  key: const Key('home_tool_family'),
-                  icon: canManage ? Icons.qr_code_2 : Icons.family_restroom,
-                  title: canManage ? 'Invitar' : 'Mi familia',
-                  description:
-                      canManage
-                          ? 'Agrega un integrante con QR'
-                          : 'Consulta quién integra el hogar',
-                  onTap: onOpenFamily,
+                IconButton(
+                  tooltip: 'Página siguiente',
+                  onPressed:
+                      _page == pageCount - 1
+                          ? null
+                          : () => _goToPage(_page + 1),
+                  icon: const Icon(Icons.chevron_right),
                 ),
               ],
             ),
           ],
         ),
       ),
+    );
+  }
+
+  void _goToPage(int page) {
+    _controller.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
     );
   }
 }
@@ -1030,134 +1305,99 @@ class _HomeToolButton extends StatelessWidget {
     required this.title,
     required this.description,
     required this.onTap,
+    this.enabled = true,
   });
 
   final IconData icon;
   final String title;
   final String description;
   final VoidCallback onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Material(
-      color: colors.surfaceContainerHighest.withValues(alpha: .55),
-      borderRadius: AppShapes.largeRadius,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: AppShapes.largeRadius,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: colors.primaryContainer,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 19, color: colors.primary),
+    return Opacity(
+      opacity: enabled ? 1 : .55,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHigh,
+          borderRadius: AppShapes.largeRadius,
+          border: Border.all(color: colors.outlineVariant, width: 1.2),
+          boxShadow: [
+            BoxShadow(
+              color: colors.shadow.withValues(alpha: .08),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: AppShapes.largeRadius,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: enabled ? onTap : null,
+            borderRadius: AppShapes.largeRadius,
+            splashColor: colors.primary.withValues(alpha: .12),
+            highlightColor: colors.primary.withValues(alpha: .06),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 11, 10, 10),
+              child: Stack(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: colors.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(icon, size: 21, color: colors.primary),
+                      ),
+                      const Spacer(),
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                  Positioned(
+                    top: 2,
+                    right: 0,
+                    child: Container(
+                      width: 25,
+                      height: 25,
+                      decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const Spacer(),
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                description,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
-}
-
-class _DashboardGuidance extends StatelessWidget {
-  const _DashboardGuidance({
-    required this.balances,
-    required this.monthlyTransactions,
-    required this.canContribute,
-    required this.onAddType,
-  });
-
-  final FinanceBalances balances;
-  final List<FinanceTransaction> monthlyTransactions;
-  final bool canContribute;
-  final ValueChanged<TransactionType> onAddType;
-
-  @override
-  Widget build(BuildContext context) {
-    final income = _total(TransactionType.income);
-    final expenses = _total(TransactionType.expense);
-    final savings = _total(TransactionType.saving);
-    late final IconData icon;
-    late final String title;
-    late final String message;
-    TransactionType? action;
-    if (!canContribute) {
-      icon = Icons.visibility_outlined;
-      title = 'Resumen para consultar';
-      message = 'Puedes revisar el estado del hogar sin modificar sus datos.';
-    } else if (monthlyTransactions.isEmpty) {
-      icon = Icons.playlist_add_outlined;
-      title = 'Comienza el mes con una base real';
-      message =
-          'Registra primero el dinero que entró para calcular tu capacidad de gasto.';
-      action = TransactionType.income;
-    } else if (income == 0) {
-      icon = Icons.info_outline;
-      title = 'Falta registrar ingresos';
-      message =
-          'Sin ingresos del mes, los porcentajes no representan tu situación completa.';
-      action = TransactionType.income;
-    } else if (expenses == 0) {
-      icon = Icons.receipt_long_outlined;
-      title = 'Aún no hay gastos este mes';
-      message =
-          'Si ya realizaste compras o pagos, regístralos para conocer tu saldo real.';
-      action = TransactionType.expense;
-    } else if (savings / income >= .1) {
-      icon = Icons.verified_outlined;
-      title = 'Buen ritmo de ahorro';
-      message =
-          'Has separado ${(savings / income * 100).clamp(0, 999).toStringAsFixed(0)}% de los ingresos de este mes.';
-    } else {
-      icon = Icons.savings_outlined;
-      title = 'Puedes fortalecer tu ahorro';
-      message = 'Separa una cantidad alcanzable antes de continuar gastando.';
-      action = TransactionType.saving;
-    }
-    return Card(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
-        subtitle: Text(message),
-        trailing:
-            action == null
-                ? null
-                : IconButton(
-                  tooltip: 'Registrar ahora',
-                  onPressed: () => onAddType(action!),
-                  icon: const Icon(Icons.arrow_forward),
-                ),
-      ),
-    );
-  }
-
-  int _total(TransactionType type) => monthlyTransactions
-      .where((item) => item.type == type)
-      .fold(0, (sum, item) => sum + item.amountMinor);
 }
 
 class _DashboardPlansSnapshot extends StatelessWidget {
@@ -1279,8 +1519,11 @@ class _DashboardPlanProgress extends StatelessWidget {
   }
 }
 
+enum _MovementView { app, bank }
+
 class _TransactionsTab extends StatefulWidget {
   const _TransactionsTab({
+    super.key,
     required this.user,
     required this.householdId,
     required this.services,
@@ -1301,18 +1544,21 @@ class _TransactionsTab extends StatefulWidget {
 }
 
 class _TransactionsTabState extends State<_TransactionsTab> {
+  static const _firstLaunchKey = 'homewallet.first_launch_at.v1';
   final _searchController = TextEditingController();
+  _MovementView _view = _MovementView.app;
   TransactionType? _filter;
   DateTimeRange? _dateRange;
   String? _category;
   String? _createdBy;
-  TransactionOrigin? _origin;
+  DateTime _appHistoryStart = DateTime.now();
   bool _showAdvanced = false;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_refresh);
+    unawaited(_loadAppHistoryStart());
   }
 
   @override
@@ -1324,6 +1570,38 @@ class _TransactionsTabState extends State<_TransactionsTab> {
 
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  void showImportedOnly() {
+    if (!mounted) return;
+    _searchController.clear();
+    setState(() {
+      _filter = null;
+      _dateRange = null;
+      _category = null;
+      _createdBy = null;
+      _view = _MovementView.bank;
+      _showAdvanced = true;
+    });
+  }
+
+  Future<void> _loadAppHistoryStart() async {
+    final preferences = await SharedPreferences.getInstance();
+    final saved = DateTime.tryParse(
+      preferences.getString(_firstLaunchKey) ?? '',
+    );
+    if (saved != null && mounted) {
+      setState(() => _appHistoryStart = saved);
+    }
+  }
+
+  void _changeView(_MovementView view) {
+    if (view == _view) return;
+    setState(() {
+      _view = view;
+      _dateRange = null;
+      _category = null;
+    });
   }
 
   @override
@@ -1340,278 +1618,287 @@ class _TransactionsTabState extends State<_TransactionsTab> {
           }
           final all =
               snapshot.data!
-                  .where((transaction) => !transaction.shared)
+                  .where((transaction) => transaction.countsInHouseholdFinances)
                   .toList();
           return StreamBuilder<List<HouseholdMember>>(
             stream: widget.services.households.watchMembers(widget.householdId),
             builder: (context, memberSnapshot) {
               final members = memberSnapshot.data ?? const <HouseholdMember>[];
-              final availableCategories =
-                  {
-                      ...TransactionCategories.all,
-                      ...all.map((item) => item.category),
-                    }.toList()
-                    ..sort();
-              final query = _searchController.text.trim().toLowerCase();
-              final visible =
-                  all.where((item) {
-                    if (_filter != null && item.type != _filter) return false;
-                    if (_category != null && item.category != _category) {
-                      return false;
-                    }
-                    if (_createdBy != null && item.createdBy != _createdBy) {
-                      return false;
-                    }
-                    if (_origin != null && item.origin != _origin) return false;
-                    if (_dateRange != null) {
-                      final day = DateTime(
-                        item.occurredAt.year,
-                        item.occurredAt.month,
-                        item.occurredAt.day,
-                      );
-                      final start = DateTime(
-                        _dateRange!.start.year,
-                        _dateRange!.start.month,
-                        _dateRange!.start.day,
-                      );
-                      final end = DateTime(
-                        _dateRange!.end.year,
-                        _dateRange!.end.month,
-                        _dateRange!.end.day,
-                        23,
-                        59,
-                        59,
-                      );
-                      if (day.isBefore(start) || day.isAfter(end)) return false;
-                    }
-                    return query.isEmpty ||
-                        item.description.toLowerCase().contains(query) ||
-                        item.category.toLowerCase().contains(query);
-                  }).toList();
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(20, 22, 20, 110),
-                children: [
-                  Row(
+              return StreamBuilder<List<FinanceCategory>>(
+                stream: widget.services.finance.watchCategories(
+                  widget.householdId,
+                ),
+                builder: (context, categorySnapshot) {
+                  final sectionTransactions =
+                      all.where((item) {
+                        final imported =
+                            item.origin == TransactionOrigin.imported;
+                        return _view == _MovementView.bank
+                            ? imported
+                            : !imported;
+                      }).toList();
+                  final availableCategories =
+                      {
+                          ...widget.user.preferredCategories,
+                          ...(categorySnapshot.data ??
+                                  const <FinanceCategory>[])
+                              .map((item) => item.name),
+                        }.toList()
+                        ..sort();
+                  final query = _searchController.text.trim().toLowerCase();
+                  final visible =
+                      sectionTransactions.where((item) {
+                        if (_filter != null && item.type != _filter) {
+                          return false;
+                        }
+                        if (_category != null && item.category != _category) {
+                          return false;
+                        }
+                        if (_createdBy != null &&
+                            item.createdBy != _createdBy) {
+                          return false;
+                        }
+                        if (_dateRange != null) {
+                          final day = DateTime(
+                            item.occurredAt.year,
+                            item.occurredAt.month,
+                            item.occurredAt.day,
+                          );
+                          final start = DateTime(
+                            _dateRange!.start.year,
+                            _dateRange!.start.month,
+                            _dateRange!.start.day,
+                          );
+                          final end = DateTime(
+                            _dateRange!.end.year,
+                            _dateRange!.end.month,
+                            _dateRange!.end.day,
+                            23,
+                            59,
+                            59,
+                          );
+                          if (day.isBefore(start) || day.isAfter(end)) {
+                            return false;
+                          }
+                        }
+                        return query.isEmpty ||
+                            item.description.toLowerCase().contains(query) ||
+                            item.category.toLowerCase().contains(query);
+                      }).toList();
+                  return ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 110),
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Movimientos',
-                          style: Theme.of(context).textTheme.headlineSmall,
+                      AppPageHeader(
+                        icon: Icons.receipt_long_outlined,
+                        title: 'Movimientos',
+                        subtitle:
+                            'Tu historial de ingresos, gastos y ahorros. Los datos financieros se cifran antes de sincronizarse.',
+                        trailing: IconButton(
+                          tooltip: 'Cómo funcionan tus registros',
+                          onPressed: _showRecordsInformation,
+                          icon: const Icon(Icons.info_outline),
                         ),
                       ),
-                      IconButton(
-                        tooltip: 'Cómo funcionan tus registros',
-                        onPressed: _showRecordsInformation,
-                        icon: const Icon(Icons.info_outline),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Tu historial de ingresos, gastos y ahorros. Los datos financieros se cifran antes de sincronizarse.',
-                  ),
-                  const SizedBox(height: 18),
-                  TextField(
-                    controller: _searchController,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      labelText: 'Buscar por descripción o categoría',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon:
-                          query.isEmpty
-                              ? null
-                              : IconButton(
-                                tooltip: 'Limpiar búsqueda',
-                                onPressed: _searchController.clear,
-                                icon: const Icon(Icons.close),
-                              ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Todos'),
-                        selected: _filter == null,
-                        onSelected: (_) => setState(() => _filter = null),
-                      ),
-                      ChoiceChip(
-                        label: const Text('Ingresos'),
-                        selected: _filter == TransactionType.income,
-                        onSelected:
-                            (_) => setState(
-                              () => _filter = TransactionType.income,
+                      const SizedBox(height: 18),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SegmentedButton<_MovementView>(
+                          segments: const [
+                            ButtonSegment(
+                              value: _MovementView.app,
+                              icon: Icon(Icons.phone_android_outlined),
+                              label: Text('HomeWallet'),
                             ),
-                      ),
-                      ChoiceChip(
-                        label: const Text('Gastos'),
-                        selected: _filter == TransactionType.expense,
-                        onSelected:
-                            (_) => setState(
-                              () => _filter = TransactionType.expense,
-                            ),
-                      ),
-                      ChoiceChip(
-                        label: const Text('Ahorros'),
-                        selected: _filter == TransactionType.saving,
-                        onSelected:
-                            (_) => setState(
-                              () => _filter = TransactionType.saving,
-                            ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          () => setState(() => _showAdvanced = !_showAdvanced),
-                      icon: Icon(
-                        _showAdvanced ? Icons.expand_less : Icons.tune,
-                      ),
-                      label: Text(
-                        _hasAdvancedFilters ? 'Filtros activos' : 'Más filtros',
-                      ),
-                    ),
-                  ),
-                  if (_showAdvanced) ...[
-                    const SizedBox(height: 8),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          children: [
-                            DropdownButtonFormField<String?>(
-                              value: _category,
-                              decoration: const InputDecoration(
-                                labelText: 'Categoría',
-                              ),
-                              items: [
-                                const DropdownMenuItem<String?>(
-                                  value: null,
-                                  child: Text('Todas las categorías'),
-                                ),
-                                ...availableCategories.map(
-                                  (value) => DropdownMenuItem<String?>(
-                                    value: value,
-                                    child: Text(value),
-                                  ),
-                                ),
-                              ],
-                              onChanged:
-                                  (value) => setState(() => _category = value),
-                            ),
-                            const SizedBox(height: 10),
-                            DropdownButtonFormField<TransactionOrigin?>(
-                              value: _origin,
-                              decoration: const InputDecoration(
-                                labelText: 'Origen del registro',
-                              ),
-                              items: const [
-                                DropdownMenuItem<TransactionOrigin?>(
-                                  value: null,
-                                  child: Text('Todos los orígenes'),
-                                ),
-                                DropdownMenuItem<TransactionOrigin?>(
-                                  value: TransactionOrigin.manual,
-                                  child: Text('Registrados en HomeWallet'),
-                                ),
-                                DropdownMenuItem<TransactionOrigin?>(
-                                  value: TransactionOrigin.imported,
-                                  child: Text('Importados de un archivo'),
-                                ),
-                              ],
-                              onChanged:
-                                  (value) => setState(() => _origin = value),
-                            ),
-                            const SizedBox(height: 10),
-                            DropdownButtonFormField<String?>(
-                              value: _createdBy,
-                              decoration: const InputDecoration(
-                                labelText: 'Integrante',
-                              ),
-                              items: [
-                                const DropdownMenuItem<String?>(
-                                  value: null,
-                                  child: Text('Todos los integrantes'),
-                                ),
-                                ...members.map(
-                                  (member) => DropdownMenuItem<String?>(
-                                    value: member.uid,
-                                    child: Text(member.displayName),
-                                  ),
-                                ),
-                              ],
-                              onChanged:
-                                  (value) => setState(() => _createdBy = value),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: _pickDateRange,
-                                    icon: const Icon(Icons.date_range_outlined),
-                                    label: Text(
-                                      _dateRange == null
-                                          ? 'Elegir período'
-                                          : '${DateFormat('dd/MM/yy').format(_dateRange!.start)} – ${DateFormat('dd/MM/yy').format(_dateRange!.end)}',
-                                    ),
-                                  ),
-                                ),
-                                if (_hasAdvancedFilters) ...[
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    tooltip: 'Limpiar filtros',
-                                    onPressed: _clearAdvancedFilters,
-                                    icon: const Icon(
-                                      Icons.filter_alt_off_outlined,
-                                    ),
-                                  ),
-                                ],
-                              ],
+                            ButtonSegment(
+                              value: _MovementView.bank,
+                              icon: Icon(Icons.account_balance_outlined),
+                              label: Text('Bancos importados'),
                             ),
                           ],
+                          selected: {_view},
+                          onSelectionChanged:
+                              (values) => _changeView(values.first),
                         ),
                       ),
-                    ),
-                  ],
-                  const SizedBox(height: 18),
-                  _MovementResultSummary(transactions: visible),
-                  const SizedBox(height: 14),
-                  if (visible.isEmpty)
-                    const _EmptyState(
-                      icon: Icons.filter_alt_off_outlined,
-                      title: 'No hay resultados',
-                      description: 'No existen movimientos para este filtro.',
-                    )
-                  else
-                    ...visible.map((transaction) {
-                      final creator =
-                          members
-                              .where(
-                                (member) => member.uid == transaction.createdBy,
-                              )
-                              .map((member) => member.displayName)
-                              .firstOrNull;
-                      final canModify =
-                          widget.canContribute &&
-                          (transaction.createdBy == widget.user.uid ||
-                              widget.canManage);
-                      return _TransactionTile(
-                        transaction: transaction,
-                        onTap:
-                            () => _showTransactionDetails(
-                              transaction,
-                              creatorName: creator,
-                              canModify: canModify,
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: _searchController,
+                        textInputAction: TextInputAction.search,
+                        decoration: InputDecoration(
+                          labelText: 'Buscar por descripción o categoría',
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon:
+                              query.isEmpty
+                                  ? null
+                                  : IconButton(
+                                    tooltip: 'Limpiar búsqueda',
+                                    onPressed: _searchController.clear,
+                                    icon: const Icon(Icons.close),
+                                  ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Todos'),
+                            selected: _filter == null,
+                            onSelected: (_) => setState(() => _filter = null),
+                          ),
+                          ChoiceChip(
+                            label: const Text('Ingresos'),
+                            selected: _filter == TransactionType.income,
+                            onSelected:
+                                (_) => setState(
+                                  () => _filter = TransactionType.income,
+                                ),
+                          ),
+                          ChoiceChip(
+                            label: const Text('Gastos'),
+                            selected: _filter == TransactionType.expense,
+                            onSelected:
+                                (_) => setState(
+                                  () => _filter = TransactionType.expense,
+                                ),
+                          ),
+                          ChoiceChip(
+                            label: const Text('Ahorros'),
+                            selected: _filter == TransactionType.saving,
+                            onSelected:
+                                (_) => setState(
+                                  () => _filter = TransactionType.saving,
+                                ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          onPressed:
+                              () => setState(
+                                () => _showAdvanced = !_showAdvanced,
+                              ),
+                          icon: Icon(
+                            _showAdvanced ? Icons.expand_less : Icons.tune,
+                          ),
+                          label: Text(
+                            _hasAdvancedFilters
+                                ? 'Filtros activos'
+                                : 'Más filtros',
+                          ),
+                        ),
+                      ),
+                      if (_showAdvanced) ...[
+                        const SizedBox(height: 8),
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              children: [
+                                DropdownButtonFormField<String?>(
+                                  value: _category,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Categoría',
+                                  ),
+                                  items: [
+                                    const DropdownMenuItem<String?>(
+                                      value: null,
+                                      child: Text('Todas las categorías'),
+                                    ),
+                                    ...availableCategories.map(
+                                      (value) => DropdownMenuItem<String?>(
+                                        value: value,
+                                        child: Text(value),
+                                      ),
+                                    ),
+                                  ],
+                                  onChanged:
+                                      (value) =>
+                                          setState(() => _category = value),
+                                ),
+                                const SizedBox(height: 10),
+                                DropdownButtonFormField<String?>(
+                                  value: _createdBy,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Integrante',
+                                  ),
+                                  items: [
+                                    const DropdownMenuItem<String?>(
+                                      value: null,
+                                      child: Text('Todos los integrantes'),
+                                    ),
+                                    ...members.map(
+                                      (member) => DropdownMenuItem<String?>(
+                                        value: member.uid,
+                                        child: Text(member.displayName),
+                                      ),
+                                    ),
+                                  ],
+                                  onChanged:
+                                      (value) =>
+                                          setState(() => _createdBy = value),
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed:
+                                            _view == _MovementView.bank &&
+                                                    sectionTransactions.isEmpty
+                                                ? null
+                                                : () => _pickDateRange(
+                                                  sectionTransactions,
+                                                ),
+                                        icon: const Icon(
+                                          Icons.date_range_outlined,
+                                        ),
+                                        label: Text(
+                                          _dateRange == null
+                                              ? _view == _MovementView.bank &&
+                                                      sectionTransactions
+                                                          .isEmpty
+                                                  ? 'Sin período bancario'
+                                                  : 'Elegir período'
+                                              : '${DateFormat('dd/MM/yy').format(_dateRange!.start)} – ${DateFormat('dd/MM/yy').format(_dateRange!.end)}',
+                                        ),
+                                      ),
+                                    ),
+                                    if (_hasAdvancedFilters) ...[
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        tooltip: 'Limpiar filtros',
+                                        onPressed: _clearAdvancedFilters,
+                                        icon: const Icon(
+                                          Icons.filter_alt_off_outlined,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ],
                             ),
-                      );
-                    }),
-                ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      _MovementResultSummary(transactions: visible),
+                      const SizedBox(height: 14),
+                      if (visible.isEmpty)
+                        const _EmptyState(
+                          icon: Icons.filter_alt_off_outlined,
+                          title: 'No hay resultados',
+                          description:
+                              'No existen movimientos para este filtro.',
+                        )
+                      else
+                        ..._buildMovementGroups(visible, members),
+                    ],
+                  );
+                },
               );
             },
           );
@@ -1621,18 +1908,98 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   }
 
   bool get _hasAdvancedFilters =>
-      _dateRange != null ||
-      _category != null ||
-      _createdBy != null ||
-      _origin != null;
+      _dateRange != null || _category != null || _createdBy != null;
 
-  Future<void> _pickDateRange() async {
+  List<Widget> _buildMovementGroups(
+    List<FinanceTransaction> transactions,
+    List<HouseholdMember> members,
+  ) {
+    final sorted = [...transactions]
+      ..sort((left, right) => right.occurredAt.compareTo(left.occurredAt));
+    final widgets = <Widget>[];
+    String? previousMonth;
+    final now = DateTime.now();
+    for (final transaction in sorted) {
+      final monthKey =
+          '${transaction.occurredAt.year}-${transaction.occurredAt.month}';
+      if (monthKey != previousMonth) {
+        final current = transaction.occursInMonth(now);
+        widgets.add(
+          Padding(
+            padding: EdgeInsets.only(
+              top: previousMonth == null ? 0 : 14,
+              bottom: 8,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  current ? Icons.today_outlined : Icons.history,
+                  size: 19,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${_monthYearLabel(transaction.occurredAt)}${current ? ' · Este mes' : ''}',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+        );
+        previousMonth = monthKey;
+      }
+      final creator =
+          members
+              .where((member) => member.uid == transaction.createdBy)
+              .map((member) => member.displayName)
+              .firstOrNull;
+      final canModify =
+          widget.canContribute &&
+          (transaction.createdBy == widget.user.uid || widget.canManage);
+      widgets.add(
+        _TransactionTile(
+          transaction: transaction,
+          onTap:
+              () => _showTransactionDetails(
+                transaction,
+                creatorName: creator,
+                canModify: canModify,
+              ),
+        ),
+      );
+    }
+    return widgets;
+  }
+
+  Future<void> _pickDateRange(List<FinanceTransaction> source) async {
+    final now = DateTime.now();
+    final dates = source.map((item) => item.occurredAt).toList()..sort();
+    final firstDate =
+        _view == _MovementView.bank && dates.isNotEmpty
+            ? DateTime(dates.first.year, dates.first.month, dates.first.day)
+            : DateTime(
+              _appHistoryStart.year,
+              _appHistoryStart.month,
+              _appHistoryStart.day,
+            );
+    final lastSourceDate =
+        _view == _MovementView.bank && dates.isNotEmpty ? dates.last : now;
+    final lastDate = DateTime(
+      lastSourceDate.year,
+      lastSourceDate.month,
+      lastSourceDate.day,
+    );
     final range = await showDateRangePicker(
       context: context,
-      firstDate: DateTime.now().subtract(const Duration(days: 364)),
-      lastDate: DateTime.now(),
+      firstDate: firstDate.isAfter(lastDate) ? lastDate : firstDate,
+      lastDate: lastDate,
       initialDateRange: _dateRange,
-      helpText: 'Filtrar movimientos por fecha',
+      helpText:
+          _view == _MovementView.bank
+              ? 'Período disponible en el archivo bancario'
+              : 'Movimientos desde que instalaste HomeWallet',
     );
     if (range != null && mounted) setState(() => _dateRange = range);
   }
@@ -1642,7 +2009,6 @@ class _TransactionsTabState extends State<_TransactionsTab> {
       _dateRange = null;
       _category = null;
       _createdBy = null;
-      _origin = null;
     });
   }
 
@@ -2115,30 +2481,35 @@ class _PlansTab extends StatelessWidget {
               return ListView(
                 padding: const EdgeInsets.fromLTRB(20, 22, 20, 40),
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          isJunior
-                              ? 'Objetivos de nuestro hogar'
-                              : 'Presupuestos y metas',
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                      ),
-                      if (!isJunior)
-                        IconButton.filled(
-                          tooltip: 'Nuevo plan',
-                          onPressed:
-                              canContribute ? () => _addPlan(context) : null,
-                          icon: const Icon(Icons.add),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    isJunior
-                        ? 'Mira cómo avanzan las metas y cómo cuidamos el presupuesto familiar.'
-                        : 'Controla límites mensuales y separa dinero para tus objetivos. Todo se actualiza con los movimientos.',
+                  AppPageHeader(
+                    icon: Icons.flag_outlined,
+                    title:
+                        isJunior
+                            ? 'Objetivos de nuestro hogar'
+                            : 'Presupuestos y metas',
+                    subtitle:
+                        isJunior
+                            ? 'Mira cómo avanzan las metas y cómo cuidamos el presupuesto familiar.'
+                            : 'Controla límites mensuales y separa dinero para tus objetivos. Todo se actualiza con los movimientos.',
+                    trailing:
+                        isJunior
+                            ? null
+                            : FilledButton.tonalIcon(
+                              key: const Key('create_plan_button'),
+                              onPressed:
+                                  canContribute
+                                      ? () => _addPlan(context)
+                                      : null,
+                              style: FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                              ),
+                              icon: const Icon(Icons.add, size: 19),
+                              label: const Text('Crear plan'),
+                            ),
                   ),
                   const SizedBox(height: 14),
                   if (isJunior)
@@ -2167,6 +2538,7 @@ class _PlansTab extends StatelessWidget {
                   else ...[
                     if (budgets.isNotEmpty) ...[
                       _PlanSectionTitle(
+                        icon: Icons.account_balance_wallet_outlined,
                         title:
                             isJunior
                                 ? 'Cuidemos el mes'
@@ -2186,6 +2558,7 @@ class _PlansTab extends StatelessWidget {
                     if (goals.isNotEmpty) ...[
                       if (budgets.isNotEmpty) const SizedBox(height: 12),
                       _PlanSectionTitle(
+                        icon: Icons.flag_outlined,
                         title:
                             isJunior
                                 ? 'Metas que queremos lograr'
@@ -2348,7 +2721,7 @@ class _PlansTab extends StatelessWidget {
                       isGoal ? Icons.add_card_outlined : Icons.add_outlined,
                     ),
                     label: Text(
-                      isGoal ? 'Agregar dinero a la meta' : 'Registrar gasto',
+                      isGoal ? 'Agregar dinero a la meta' : 'Agregar gasto',
                     ),
                   ),
                 ),
@@ -2614,20 +2987,39 @@ class _PlanLogicRow extends StatelessWidget {
 }
 
 class _PlanSectionTitle extends StatelessWidget {
-  const _PlanSectionTitle({required this.title, required this.subtitle});
+  const _PlanSectionTitle({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
 
+  final IconData icon;
   final String title;
   final String subtitle;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 9),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 2),
-        Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+          foregroundColor: Theme.of(context).colorScheme.primary,
+          child: Icon(icon, size: 19),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 2),
+              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
       ],
     ),
   );
@@ -2776,15 +3168,15 @@ class _ProfileTabState extends State<_ProfileTab> {
           widget.user.uid,
         ),
         builder: (context, snapshot) {
+          final currentHousehold = snapshot.data ?? widget.household;
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 22, 20, 40),
             children: [
-              Text(
-                'Perfil y configuración',
-                style: Theme.of(context).textTheme.headlineSmall,
+              const AppPageHeader(
+                icon: Icons.person_outline,
+                title: 'Perfil y configuración',
+                subtitle: 'Tu cuenta, hogar, seguridad y preferencias.',
               ),
-              const SizedBox(height: 4),
-              const Text('Tu cuenta, hogar, seguridad y preferencias.'),
               const SizedBox(height: 20),
               Card(
                 child: ListTile(
@@ -2803,22 +3195,32 @@ class _ProfileTabState extends State<_ProfileTab> {
               const SizedBox(height: 12),
               Card(
                 child: ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: AppColors.blushPinkLight,
-                    foregroundColor: AppColors.blushPinkDark,
-                    child: Icon(Icons.family_restroom),
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primaryContainer,
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                    child: Icon(_householdKindIcon(currentHousehold.kind)),
                   ),
-                  title: Text(snapshot.data?.name ?? 'Hogar cifrado'),
+                  title: Text(currentHousehold.name),
                   subtitle: Text(
                     snapshot.hasError
                         ? _errorText(snapshot.error)
-                        : '${snapshot.data?.memberCount ?? '—'} integrantes · ${widget.household.kind.label}',
+                        : '${currentHousehold.memberCount} ${currentHousehold.memberCount == 1 ? 'integrante' : 'integrantes'} · ${currentHousehold.kind.label}',
                   ),
-                  trailing: const Icon(Icons.verified_user_outlined),
-                  onTap: _showMembers,
+                  trailing:
+                      currentHousehold.canManage
+                          ? IconButton(
+                            key: const Key('edit_household_kind'),
+                            tooltip: 'Cambiar tipo de hogar',
+                            onPressed:
+                                () => _changeHouseholdKind(currentHousehold),
+                            icon: const Icon(Icons.edit_outlined),
+                          )
+                          : const Icon(Icons.verified_user_outlined),
+                  onTap: () => _showMembers(currentHousehold),
                 ),
               ),
-              if (!widget.household.canContribute) ...[
+              if (!currentHousehold.canContribute) ...[
                 const SizedBox(height: 12),
                 Card(
                   color: Theme.of(context).colorScheme.primaryContainer,
@@ -2856,7 +3258,7 @@ class _ProfileTabState extends State<_ProfileTab> {
                                 authRepository: widget.services.auth,
                                 preferredCategories:
                                     widget.user.preferredCategories.toSet(),
-                                canContribute: widget.household.canContribute,
+                                canContribute: currentHousehold.canContribute,
                               ),
                         ),
                       ),
@@ -2901,8 +3303,10 @@ class _ProfileTabState extends State<_ProfileTab> {
                     SwitchListTile.adaptive(
                       secondary: const Icon(Icons.fingerprint),
                       title: const Text('Bloqueo del dispositivo'),
-                      subtitle: const Text(
-                        'Solicita huella, rostro, PIN o patrón al reabrir',
+                      subtitle: Text(
+                        _biometricEnabled == true
+                            ? 'Activo · usa la seguridad configurada en este teléfono'
+                            : 'Desactivado · elige cómo proteger HomeWallet',
                       ),
                       value: _biometricEnabled ?? false,
                       onChanged:
@@ -2986,7 +3390,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 20),
               Text(
-                'HomeWallet 1.0.0 · Firebase Blaze',
+                'HomeWallet 1.0.2 · Firebase Blaze',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -3028,9 +3432,99 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   Future<void> _changeBiometric(bool enabled) async {
+    if (enabled) {
+      final action = await showModalBottomSheet<_DeviceLockAction>(
+        context: context,
+        showDragHandle: true,
+        useSafeArea: true,
+        builder:
+            (context) => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const AppPageHeader(
+                    icon: Icons.fingerprint,
+                    title: 'Protege HomeWallet',
+                    subtitle:
+                        'Android o iOS valida la huella, el rostro, PIN o patrón sin compartir esos datos con la app.',
+                  ),
+                  const SizedBox(height: 18),
+                  Card(
+                    child: ListTile(
+                      key: const Key('use_current_device_lock'),
+                      leading: const Icon(Icons.verified_user_outlined),
+                      title: const Text('Usar el bloqueo actual'),
+                      subtitle: const Text(
+                        'Utiliza la seguridad que ya está configurada en este teléfono.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap:
+                          () => Navigator.pop(
+                            context,
+                            _DeviceLockAction.useCurrent,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Card(
+                    child: ListTile(
+                      key: const Key('configure_device_lock'),
+                      leading: const Icon(Icons.add_moderator_outlined),
+                      title: const Text('Agregar o cambiar seguridad'),
+                      subtitle: const Text(
+                        'Abre los ajustes del teléfono para añadir una huella, rostro, PIN o patrón.',
+                      ),
+                      trailing: const Icon(Icons.open_in_new),
+                      onTap:
+                          () => Navigator.pop(
+                            context,
+                            _DeviceLockAction.configure,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      );
+      if (!mounted || action == null) return;
+      if (action == _DeviceLockAction.configure) {
+        try {
+          await widget.services.biometricLock.openEnrollmentSettings();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Cuando termines en los ajustes, vuelve y activa el bloqueo usando la seguridad actual.',
+                ),
+              ),
+            );
+          }
+        } on AppException catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(error.message)));
+          }
+        }
+        return;
+      }
+    }
     try {
       await widget.services.biometricLock.setEnabled(widget.user.uid, enabled);
-      if (mounted) setState(() => _biometricEnabled = enabled);
+      if (mounted) {
+        setState(() => _biometricEnabled = enabled);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              enabled
+                  ? 'Bloqueo de HomeWallet activado.'
+                  : 'Bloqueo de HomeWallet desactivado.',
+            ),
+          ),
+        );
+      }
     } on AppException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -3053,19 +3547,97 @@ class _ProfileTabState extends State<_ProfileTab> {
     );
   }
 
-  void _showMembers() {
+  void _showMembers(Household household) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder:
             (_) => HouseholdMembersScreen(
               user: widget.user,
-              household: widget.household,
+              household: household,
               repository: widget.services.households,
             ),
       ),
     );
   }
+
+  Future<void> _changeHouseholdKind(Household household) async {
+    final selected = await showModalBottomSheet<HouseholdKind>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder:
+          (context) => Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const AppPageHeader(
+                  icon: Icons.home_outlined,
+                  title: 'Tipo de hogar',
+                  subtitle:
+                      'Elige cómo quieres identificar este espacio. El nombre y los movimientos no cambiarán.',
+                ),
+                const SizedBox(height: 14),
+                ...HouseholdKind.values.map(
+                  (kind) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Card(
+                      color:
+                          household.kind == kind
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : null,
+                      child: ListTile(
+                        key: Key('change_household_kind_${kind.name}'),
+                        leading: Icon(_householdKindIcon(kind)),
+                        title: Text(kind.label),
+                        trailing:
+                            household.kind == kind
+                                ? Icon(
+                                  Icons.check_circle,
+                                  color: Theme.of(context).colorScheme.primary,
+                                )
+                                : const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.pop(context, kind),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+    if (selected == null || selected == household.kind || !mounted) return;
+    try {
+      await widget.services.households.updateHouseholdKind(
+        householdId: household.id,
+        kind: selected,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tipo de hogar actualizado a ${selected.label}.'),
+          ),
+        );
+      }
+    } on AppException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
 }
+
+enum _DeviceLockAction { useCurrent, configure }
+
+IconData _householdKindIcon(HouseholdKind kind) => switch (kind) {
+  HouseholdKind.individual => Icons.person_outline,
+  HouseholdKind.family => Icons.family_restroom,
+  HouseholdKind.couple => Icons.favorite_outline,
+  HouseholdKind.group => Icons.groups_outlined,
+};
 
 class _MovementTypePicker extends StatelessWidget {
   const _MovementTypePicker();
@@ -3185,6 +3757,8 @@ class _TransactionFormState extends State<_TransactionForm> {
   ExpenseFundingSource _fundingSource = ExpenseFundingSource.general;
   DateTime _occurredAt = DateTime.now();
   List<FinancePlan> _goals = const [];
+  List<FinancePlan> _plans = const [];
+  List<FinanceTransaction> _transactions = const [];
   int _budgetCount = 0;
   List<FinanceCategory> _customCategories = const [];
   int _availableSavingsMinor = 0;
@@ -3227,6 +3801,7 @@ class _TransactionFormState extends State<_TransactionForm> {
       stream: widget.plans,
       builder: (context, planSnapshot) {
         final availablePlans = planSnapshot.data ?? const <FinancePlan>[];
+        _plans = availablePlans;
         _goals =
             availablePlans
                 .where(
@@ -3254,8 +3829,13 @@ class _TransactionFormState extends State<_TransactionForm> {
                 (transactionSnapshot.data ?? const <FinanceTransaction>[])
                     .where((item) => item.id != widget.existing?.id)
                     .toList();
+            _transactions = transactions;
             _availableSavingsMinor =
-                FinanceBalances.calculate(transactions, _goals).savings;
+                FinanceBalances.calculate(
+                  transactions,
+                  _goals,
+                  currentPeriod: DateTime.now(),
+                ).savings;
             return StreamBuilder<List<FinanceCategory>>(
               stream: widget.customCategories,
               builder: (context, categorySnapshot) {
@@ -3496,6 +4076,17 @@ class _TransactionFormState extends State<_TransactionForm> {
       _showError('Selecciona la meta de la que salió el dinero.');
       return;
     }
+    final guidance = evaluateTransactionGuidance(
+      type: _type,
+      description: description,
+      category: _category,
+      amountMinor: amount,
+      occurredAt: _occurredAt,
+      fundingSource: _fundingSource,
+      transactions: _transactions,
+      plans: _plans,
+      linkedPlan: linkedPlan,
+    );
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       showDragHandle: true,
@@ -3510,6 +4101,7 @@ class _TransactionFormState extends State<_TransactionForm> {
             linkedPlan: linkedPlan,
             fundingSource: _fundingSource,
             editing: widget.existing != null,
+            guidance: guidance,
           ),
     );
     if (confirmed != true || !mounted) return;
@@ -3526,6 +4118,7 @@ class _TransactionFormState extends State<_TransactionForm> {
         paidByUid: null,
         splitMode: ExpenseSplitMode.equal,
         participantSharesMinor: const {},
+        guidance: guidance,
       ),
     );
   }
@@ -3731,11 +4324,8 @@ class _TransactionCategoryField extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: enabled ? scheme.surface : scheme.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppShapes.mediumRadius,
-        side: BorderSide(color: scheme.outline),
-      ),
+      color: scheme.surfaceContainerHighest,
+      shape: const RoundedRectangleBorder(borderRadius: AppShapes.mediumRadius),
       child: InkWell(
         key: const Key('transaction_category'),
         onTap: enabled ? onTap : null,
@@ -3929,11 +4519,8 @@ class _TransactionDateField extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: scheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: AppShapes.mediumRadius,
-        side: BorderSide(color: scheme.outline),
-      ),
+      color: scheme.surfaceContainerHighest,
+      shape: const RoundedRectangleBorder(borderRadius: AppShapes.mediumRadius),
       child: InkWell(
         key: const Key('transaction_date'),
         onTap: onTap,
@@ -3992,6 +4579,7 @@ class _MovementReviewSheet extends StatelessWidget {
     required this.linkedPlan,
     required this.fundingSource,
     required this.editing,
+    required this.guidance,
   });
 
   final String description;
@@ -4002,6 +4590,7 @@ class _MovementReviewSheet extends StatelessWidget {
   final FinancePlan? linkedPlan;
   final ExpenseFundingSource fundingSource;
   final bool editing;
+  final FinancialGuidance guidance;
 
   @override
   Widget build(BuildContext context) {
@@ -4067,6 +4656,8 @@ class _MovementReviewSheet extends StatelessWidget {
                 subtitle: Text(effect),
               ),
             ),
+            const SizedBox(height: 10),
+            _FinancialGuidanceCard(guidance: guidance),
             const SizedBox(height: 12),
             const Text(
               'El registro se cifra antes de sincronizarse. Conserva aparte tus comprobantes bancarios o tributarios.',
@@ -4086,6 +4677,51 @@ class _MovementReviewSheet extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _FinancialGuidanceCard extends StatelessWidget {
+  const _FinancialGuidanceCard({required this.guidance});
+
+  final FinancialGuidance guidance;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (color, foreground, icon) = switch (guidance.tone) {
+      FinancialGuidanceTone.critical => (
+        scheme.errorContainer,
+        scheme.onErrorContainer,
+        Icons.warning_amber_rounded,
+      ),
+      FinancialGuidanceTone.caution => (
+        scheme.tertiaryContainer,
+        scheme.onTertiaryContainer,
+        Icons.speed_outlined,
+      ),
+      FinancialGuidanceTone.positive => (
+        AppColors.accessibleGreen.withValues(alpha: .16),
+        scheme.onSurface,
+        Icons.celebration_outlined,
+      ),
+      FinancialGuidanceTone.informative => (
+        scheme.secondaryContainer,
+        scheme.onSecondaryContainer,
+        Icons.lightbulb_outline,
+      ),
+    };
+    return Card(
+      key: const Key('financial_guidance'),
+      color: color,
+      child: ListTile(
+        leading: Icon(icon, color: foreground),
+        title: Text(
+          guidance.title,
+          style: TextStyle(color: foreground, fontWeight: FontWeight.w900),
+        ),
+        subtitle: Text(guidance.message, style: TextStyle(color: foreground)),
       ),
     );
   }
@@ -4576,6 +5212,7 @@ class _TransactionInput {
     required this.shared,
     required this.splitMode,
     required this.participantSharesMinor,
+    required this.guidance,
     this.linkedPlan,
     this.paidByUid,
   });
@@ -4591,6 +5228,7 @@ class _TransactionInput {
   final String? paidByUid;
   final ExpenseSplitMode splitMode;
   final Map<String, int> participantSharesMinor;
+  final FinancialGuidance guidance;
 }
 
 class _PlanInput {
@@ -4657,6 +5295,24 @@ String _longSpanishDate(DateTime date, {bool includeWeekday = false}) {
   if (!includeWeekday) return value;
   final weekday = weekdays[date.weekday - 1];
   return '${weekday[0].toUpperCase()}${weekday.substring(1)}, $value';
+}
+
+String _monthYearLabel(DateTime date) {
+  const months = [
+    'Enero',
+    'Febrero',
+    'Marzo',
+    'Abril',
+    'Mayo',
+    'Junio',
+    'Julio',
+    'Agosto',
+    'Septiembre',
+    'Octubre',
+    'Noviembre',
+    'Diciembre',
+  ];
+  return '${months[date.month - 1]} ${date.year}';
 }
 
 IconData _categoryIcon(String category) => switch (category) {

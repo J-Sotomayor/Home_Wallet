@@ -1,7 +1,7 @@
 name: homewallet
 description: "Finanzas colaborativas para hogares y parejas."
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: ^3.7.2
@@ -67,8 +67,8 @@ flutter_launcher_icons:
 flutter_native_splash:
   color: "#F3F4F6"
   color_dark: "#111827"
-  image: assets/branding/generated/splash_logo.png
-  image_dark: assets/branding/generated/splash_logo.png
+  image: assets/branding/generated/app_icon_1024.png
+  image_dark: assets/branding/generated/app_icon_1024.png
   android: true
   ios: true
   web: false

@@ -67,7 +67,7 @@ class _RecurringTransactionsScreenState
               ),
               const SizedBox(height: 5),
               const Text(
-                'Organiza pagos, ingresos o ahorros y decide si quieres revisarlos antes de registrarlos.',
+                'Organiza pagos, ingresos o ahorros y decide si quieres validarlos antes de guardarlos.',
               ),
               if (widget.canContribute && items.isNotEmpty) ...[
                 const SizedBox(height: 16),
@@ -179,7 +179,7 @@ class _RecurringTransactionsScreenState
         uid: widget.uid,
         recurring: recurring,
       );
-      _message('Movimiento registrado. La próxima fecha ya fue calculada.');
+      _message('Registro validado. La próxima fecha ya fue calculada.');
     } on AppException catch (error) {
       _message(error.message);
     } finally {
@@ -388,7 +388,7 @@ class _RecurringCard extends StatelessWidget {
                 _InfoPill(
                   icon: Icons.event_outlined,
                   label:
-                      'Próximo: ${DateFormat('dd/MM/yyyy').format(item.nextDueAt)}',
+                      'Próximo: ${DateFormat('dd/MM/yyyy · HH:mm').format(item.nextDueAt)}',
                 ),
               ],
             ),
@@ -406,8 +406,8 @@ class _RecurringCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     item.confirmBeforePosting
-                        ? 'Te pedirá revisión antes de registrarlo.'
-                        : 'Se registrará al abrir HomeWallet después de la fecha.',
+                        ? 'Te avisará a esa hora para que puedas validarlo.'
+                        : 'Se validará y guardará al abrir HomeWallet después de la fecha.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -424,7 +424,7 @@ class _RecurringCard extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                         : const Icon(Icons.check_circle_outline),
-                label: const Text('Revisar y registrar ahora'),
+                label: const Text('Revisar y validar ahora'),
               ),
             ],
           ],
@@ -636,21 +636,23 @@ class _RecurringFormState extends State<_RecurringForm> {
             const SizedBox(height: 5),
             const Text('Define cada cuánto ocurre y desde qué fecha.'),
             const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              childAspectRatio: 2.75,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
               children:
                   RecurrenceFrequency.values
                       .map(
-                        (frequency) => ChoiceChip(
+                        (frequency) => _FrequencyOption(
                           key: ValueKey(
                             'recurring_frequency_${frequency.name}',
                           ),
-                          avatar: const Icon(Icons.repeat, size: 17),
-                          label: Text(frequency.label),
+                          frequency: frequency,
                           selected: _frequency == frequency,
-                          onSelected:
-                              (_) => setState(() => _frequency = frequency),
+                          onTap: () => setState(() => _frequency = frequency),
                         ),
                       )
                       .toList(),
@@ -685,24 +687,38 @@ class _RecurringFormState extends State<_RecurringForm> {
                 value: true,
                 groupValue: _confirmBeforePosting,
                 secondary: const Icon(Icons.notifications_active_outlined),
-                title: const Text('Avisarme antes de registrarlo'),
+                title: const Text('Avisarme antes de validarlo'),
                 subtitle: const Text(
-                  'Revisas el monto y decides cuándo registrarlo. Recomendado.',
+                  'Elige una hora, revisa el monto y decide cuándo validarlo. Recomendado.',
                 ),
                 onChanged:
                     (value) =>
                         setState(() => _confirmBeforePosting = value ?? true),
               ),
             ),
+            if (_confirmBeforePosting)
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: ListTile(
+                  key: const Key('recurring_reminder_time'),
+                  leading: const Icon(Icons.schedule_outlined),
+                  title: const Text('Hora del aviso'),
+                  subtitle: Text(
+                    '${DateFormat('HH:mm').format(_nextDueAt)} · toca para cambiarla',
+                  ),
+                  trailing: const Icon(Icons.edit_outlined),
+                  onTap: _pickTime,
+                ),
+              ),
             Card(
               clipBehavior: Clip.antiAlias,
               child: RadioListTile<bool>(
                 value: false,
                 groupValue: _confirmBeforePosting,
                 secondary: const Icon(Icons.bolt_outlined),
-                title: const Text('Registrar automáticamente'),
+                title: const Text('Validar automáticamente'),
                 subtitle: const Text(
-                  'Se registrará cuando abras HomeWallet en o después de la fecha.',
+                  'Se validará y guardará cuando abras HomeWallet en o después de la fecha.',
                 ),
                 onChanged:
                     (value) =>
@@ -748,15 +764,42 @@ class _RecurringFormState extends State<_RecurringForm> {
     );
     if (date != null && mounted) {
       final today = DateTime(now.year, now.month, now.day);
-      final chosen = DateTime(date.year, date.month, date.day);
-      setState(
-        () =>
-            _nextDueAt =
-                chosen == today
-                    ? now.add(const Duration(minutes: 5))
-                    : DateTime(date.year, date.month, date.day, 9),
+      var chosen = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        _nextDueAt.hour,
+        _nextDueAt.minute,
       );
+      if (DateTime(date.year, date.month, date.day) == today &&
+          !chosen.isAfter(now)) {
+        chosen = now.add(const Duration(minutes: 5));
+      }
+      setState(() => _nextDueAt = chosen);
     }
+  }
+
+  Future<void> _pickTime() async {
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_nextDueAt),
+      helpText: 'HORA DEL AVISO',
+      cancelText: 'CANCELAR',
+      confirmText: 'ELEGIR',
+    );
+    if (selected == null || !mounted) return;
+    final chosen = DateTime(
+      _nextDueAt.year,
+      _nextDueAt.month,
+      _nextDueAt.day,
+      selected.hour,
+      selected.minute,
+    );
+    if (!chosen.isAfter(DateTime.now())) {
+      _showError('Elige una hora futura para el primer aviso.');
+      return;
+    }
+    setState(() => _nextDueAt = chosen);
   }
 
   void _save() {
@@ -831,6 +874,62 @@ class _RecurringTypeOption extends StatelessWidget {
           color: selected ? scheme.primary : null,
         ),
         onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _FrequencyOption extends StatelessWidget {
+  const _FrequencyOption({
+    super.key,
+    required this.frequency,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final RecurrenceFrequency frequency;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: selected ? scheme.primary : scheme.outlineVariant,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Row(
+            children: [
+              Icon(
+                Icons.repeat,
+                size: 17,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  frequency.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (selected)
+                Icon(Icons.check_circle, size: 18, color: scheme.primary),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -915,7 +1014,7 @@ class _RecurringPreview extends StatelessWidget {
             Text(
               confirmBeforePosting
                   ? 'HomeWallet te pedirá revisión.'
-                  : 'Se registrará automáticamente al abrir la app.',
+                  : 'Se validará automáticamente al abrir la app.',
             ),
           ],
         ),
@@ -966,7 +1065,7 @@ class _RecurringEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Úsalas para recordar y registrar movimientos que ocurren con frecuencia.',
+              'Úsalas para recordar y validar registros que ocurren con frecuencia.',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),

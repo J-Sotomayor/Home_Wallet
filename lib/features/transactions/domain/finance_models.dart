@@ -162,6 +162,23 @@ class FinanceTransaction {
   final ExpenseSplitMode splitMode;
   final Map<String, int> participantSharesMinor;
   final Set<String> settledParticipantIds;
+
+  /// Whether this transaction belongs in the household cash flow.
+  ///
+  /// Older bank imports were accidentally stored as `shared`. They are still
+  /// real bank movements, so keeping this compatibility rule makes those
+  /// already-imported records visible without a data migration.
+  bool get countsInHouseholdFinances =>
+      !shared || origin == TransactionOrigin.imported;
+
+  bool occursInMonth(DateTime reference) =>
+      occurredAt.year == reference.year && occurredAt.month == reference.month;
+
+  /// Historical bank statements remain visible in Movimientos and historical
+  /// reports, but only imports from the active month affect the live balance.
+  bool affectsLiveBalanceAt(DateTime reference) =>
+      countsInHouseholdFinances &&
+      (origin != TransactionOrigin.imported || occursInMonth(reference));
 }
 
 class FinanceTransactionDraft {

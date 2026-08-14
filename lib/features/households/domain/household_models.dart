@@ -1,15 +1,18 @@
 enum HouseholdKind {
+  individual,
   family,
   couple,
   group;
 
   String get label => switch (this) {
+    HouseholdKind.individual => 'Individual',
     HouseholdKind.family => 'Familia',
     HouseholdKind.couple => 'Pareja',
     HouseholdKind.group => 'Grupo',
   };
 
   static HouseholdKind parse(Object? value) => switch (value) {
+    'individual' => HouseholdKind.individual,
     'couple' => HouseholdKind.couple,
     'group' => HouseholdKind.group,
     _ => HouseholdKind.family,

@@ -26,8 +26,11 @@ List<FinanceTransaction> transactionsForExport(
 class TransactionExportService {
   const TransactionExportService();
 
-  Uint8List exportExcel(List<FinanceTransaction> transactions) {
-    final sorted = _sorted(transactions);
+  Uint8List exportExcel(
+    List<FinanceTransaction> transactions, {
+    Map<String, String> memberNames = const {},
+  }) {
+    final sorted = _sorted(transactions, memberNames: memberNames);
     final totals = _totals(sorted);
     final period = _period(sorted);
     final excel = Excel.createExcel();
@@ -166,9 +169,30 @@ class TransactionExportService {
     }
     sheet.setRowHeight(8, 26);
 
+    var row = 9;
+    String? previousMember;
     for (var index = 0; index < sorted.length; index++) {
       final transaction = sorted[index];
-      final row = index + 9;
+      if (memberNames.isNotEmpty && transaction.createdBy != previousMember) {
+        final memberName = memberNames[transaction.createdBy] ?? 'Integrante';
+        _mergeAndWrite(
+          sheet,
+          'A${row + 1}',
+          'F${row + 1}',
+          'INTEGRANTE · $memberName',
+        );
+        _styleRange(
+          sheet,
+          row,
+          0,
+          row,
+          5,
+          subtitleStyle.copyWith(boldVal: true),
+        );
+        sheet.setRowHeight(row, 23);
+        row++;
+        previousMember = transaction.createdBy;
+      }
       final baseStyle = CellStyle(
         backgroundColorHex: index.isOdd ? paleGray : white,
         fontColorHex: dark,
@@ -214,9 +238,10 @@ class TransactionExportService {
         );
       }
       sheet.setRowHeight(row, 24);
+      row++;
     }
 
-    final totalRow = sorted.length + 10;
+    final totalRow = row + 1;
     _mergeAndWrite(sheet, 'A${totalRow + 1}', 'D${totalRow + 1}', 'TOTALES');
     _styleRange(sheet, totalRow, 0, totalRow, 3, headerStyle);
     final debitTotal = totals.expense + totals.saving;
@@ -246,8 +271,11 @@ class TransactionExportService {
     return Uint8List.fromList(encoded);
   }
 
-  Future<Uint8List> exportPdf(List<FinanceTransaction> transactions) async {
-    final sorted = _sorted(transactions);
+  Future<Uint8List> exportPdf(
+    List<FinanceTransaction> transactions, {
+    Map<String, String> memberNames = const {},
+  }) async {
+    final sorted = _sorted(transactions, memberNames: memberNames);
     final totals = _totals(sorted);
     final period = _period(sorted);
     final blue = PdfColor.fromHex('#2563EB');
@@ -405,6 +433,15 @@ class TransactionExportService {
                   ),
                 ],
               ),
+              pw.SizedBox(height: 12),
+              _pdfFinancialHealth(
+                totals: totals,
+                dark: dark,
+                green: green,
+                red: red,
+                blue: blue,
+                background: paleBlue,
+              ),
               pw.SizedBox(height: 18),
               pw.Container(
                 width: double.infinity,
@@ -422,66 +459,13 @@ class TransactionExportService {
                   ),
                 ),
               ),
-              pw.TableHelper.fromTextArray(
-                headers: const [
-                  'FECHA',
-                  'TIPO',
-                  'CATEGORÍA',
-                  'DESCRIPCIÓN',
-                  'DÉBITO',
-                  'CRÉDITO',
-                ],
-                data:
-                    sorted
-                        .map(
-                          (transaction) => [
-                            DateFormat(
-                              'dd/MM/yyyy',
-                            ).format(transaction.occurredAt),
-                            _typeLabel(transaction.type),
-                            transaction.category,
-                            transaction.description,
-                            transaction.type == TransactionType.income
-                                ? ''
-                                : _money(transaction.amountMinor),
-                            transaction.type == TransactionType.income
-                                ? _money(transaction.amountMinor)
-                                : '',
-                          ],
-                        )
-                        .toList(),
-                headerDecoration: pw.BoxDecoration(color: dark),
-                headerStyle: pw.TextStyle(
-                  color: PdfColors.white,
-                  fontSize: 7,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-                cellStyle: pw.TextStyle(color: dark, fontSize: 7),
-                oddCellStyle: pw.TextStyle(color: dark, fontSize: 7),
-                cellPadding: const pw.EdgeInsets.symmetric(
-                  horizontal: 4,
-                  vertical: 5,
-                ),
-                cellAlignments: const {
-                  0: pw.Alignment.center,
-                  1: pw.Alignment.center,
-                  4: pw.Alignment.centerRight,
-                  5: pw.Alignment.centerRight,
-                },
-                columnWidths: const {
-                  0: pw.FlexColumnWidth(1.2),
-                  1: pw.FlexColumnWidth(1.0),
-                  2: pw.FlexColumnWidth(1.5),
-                  3: pw.FlexColumnWidth(3.2),
-                  4: pw.FlexColumnWidth(1.2),
-                  5: pw.FlexColumnWidth(1.2),
-                },
-                border: pw.TableBorder(
-                  bottom: pw.BorderSide(color: gray, width: .5),
-                  horizontalInside: pw.BorderSide(color: gray, width: .35),
-                ),
-                rowDecoration: const pw.BoxDecoration(color: PdfColors.white),
-                oddRowDecoration: pw.BoxDecoration(color: paleGray),
+              ..._pdfTransactionSections(
+                sorted,
+                memberNames: memberNames,
+                dark: dark,
+                blue: blue,
+                gray: gray,
+                paleGray: paleGray,
               ),
               pw.SizedBox(height: 10),
               pw.Align(
@@ -510,6 +494,198 @@ class TransactionExportService {
     );
     return document.save();
   }
+
+  static pw.Widget _pdfFinancialHealth({
+    required _ExportTotals totals,
+    required PdfColor dark,
+    required PdfColor green,
+    required PdfColor red,
+    required PdfColor blue,
+    required PdfColor background,
+  }) {
+    final income = totals.income;
+    final expenseRatio = income <= 0 ? 1.0 : totals.expense / income;
+    final savingRatio = income <= 0 ? 0.0 : totals.saving / income;
+    final status =
+        income <= 0
+            ? 'Sin ingresos suficientes para evaluar'
+            : expenseRatio > 1
+            ? 'Atención: los gastos superan los ingresos'
+            : expenseRatio > .8
+            ? 'Salud financiera ajustada'
+            : savingRatio >= .1
+            ? 'Salud financiera favorable'
+            : 'Flujo estable; conviene reforzar el ahorro';
+    pw.Widget bar(String label, double ratio, PdfColor color) {
+      final active = (ratio.clamp(0, 1) * 100).round();
+      final remaining = 100 - active;
+      return pw.Padding(
+        padding: const pw.EdgeInsets.only(top: 5),
+        child: pw.Row(
+          children: [
+            pw.SizedBox(
+              width: 58,
+              child: pw.Text(label, style: const pw.TextStyle(fontSize: 7)),
+            ),
+            pw.Expanded(
+              child: pw.Container(
+                height: 8,
+                decoration: pw.BoxDecoration(
+                  borderRadius: pw.BorderRadius.circular(4),
+                ),
+                child: pw.Row(
+                  children: [
+                    if (active > 0)
+                      pw.Expanded(
+                        flex: active,
+                        child: pw.Container(color: color),
+                      ),
+                    if (remaining > 0)
+                      pw.Expanded(
+                        flex: remaining,
+                        child: pw.Container(color: PdfColors.grey300),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            pw.SizedBox(width: 7),
+            pw.SizedBox(
+              width: 30,
+              child: pw.Text(
+                '${(ratio * 100).round()}%',
+                textAlign: pw.TextAlign.right,
+                style: const pw.TextStyle(fontSize: 7),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        color: background,
+        borderRadius: pw.BorderRadius.circular(7),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            'SALUD FINANCIERA · $status',
+            style: pw.TextStyle(
+              color: dark,
+              fontSize: 9,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          bar('Gastos/ingresos', expenseRatio, expenseRatio > 1 ? red : green),
+          bar('Ahorro/ingresos', savingRatio, blue),
+        ],
+      ),
+    );
+  }
+
+  static List<pw.Widget> _pdfTransactionSections(
+    List<FinanceTransaction> transactions, {
+    required Map<String, String> memberNames,
+    required PdfColor dark,
+    required PdfColor blue,
+    required PdfColor gray,
+    required PdfColor paleGray,
+  }) {
+    if (memberNames.isEmpty) {
+      return [_pdfTransactionTable(transactions, dark, gray, paleGray)];
+    }
+    final grouped = <String, List<FinanceTransaction>>{};
+    for (final transaction in transactions) {
+      grouped.putIfAbsent(transaction.createdBy, () => []).add(transaction);
+    }
+    final widgets = <pw.Widget>[];
+    for (final entry in grouped.entries) {
+      widgets.add(
+        pw.Container(
+          width: double.infinity,
+          color: PdfColor.fromHex('#EFF6FF'),
+          padding: const pw.EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+          child: pw.Text(
+            'INTEGRANTE · ${memberNames[entry.key] ?? 'Integrante'}',
+            style: pw.TextStyle(
+              color: blue,
+              fontSize: 8,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+        ),
+      );
+      widgets.add(_pdfTransactionTable(entry.value, dark, gray, paleGray));
+      widgets.add(pw.SizedBox(height: 9));
+    }
+    return widgets;
+  }
+
+  static pw.Widget _pdfTransactionTable(
+    List<FinanceTransaction> transactions,
+    PdfColor dark,
+    PdfColor gray,
+    PdfColor paleGray,
+  ) => pw.TableHelper.fromTextArray(
+    headers: const [
+      'FECHA',
+      'TIPO',
+      'CATEGORÍA',
+      'DESCRIPCIÓN',
+      'DÉBITO',
+      'CRÉDITO',
+    ],
+    data:
+        transactions
+            .map(
+              (transaction) => [
+                DateFormat('dd/MM/yyyy').format(transaction.occurredAt),
+                _typeLabel(transaction.type),
+                transaction.category,
+                transaction.description,
+                transaction.type == TransactionType.income
+                    ? ''
+                    : _money(transaction.amountMinor),
+                transaction.type == TransactionType.income
+                    ? _money(transaction.amountMinor)
+                    : '',
+              ],
+            )
+            .toList(),
+    headerDecoration: pw.BoxDecoration(color: dark),
+    headerStyle: pw.TextStyle(
+      color: PdfColors.white,
+      fontSize: 7,
+      fontWeight: pw.FontWeight.bold,
+    ),
+    cellStyle: pw.TextStyle(color: dark, fontSize: 7),
+    oddCellStyle: pw.TextStyle(color: dark, fontSize: 7),
+    cellPadding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+    cellAlignments: const {
+      0: pw.Alignment.center,
+      1: pw.Alignment.center,
+      4: pw.Alignment.centerRight,
+      5: pw.Alignment.centerRight,
+    },
+    columnWidths: const {
+      0: pw.FlexColumnWidth(1.2),
+      1: pw.FlexColumnWidth(1.0),
+      2: pw.FlexColumnWidth(1.5),
+      3: pw.FlexColumnWidth(3.2),
+      4: pw.FlexColumnWidth(1.2),
+      5: pw.FlexColumnWidth(1.2),
+    },
+    border: pw.TableBorder(
+      bottom: pw.BorderSide(color: gray, width: .5),
+      horizontalInside: pw.BorderSide(color: gray, width: .35),
+    ),
+    rowDecoration: const pw.BoxDecoration(color: PdfColors.white),
+    oddRowDecoration: pw.BoxDecoration(color: paleGray),
+  );
 
   static pw.Widget _pdfSummaryCard(
     String label,
@@ -575,10 +751,24 @@ class TransactionExportService {
   }
 
   static List<FinanceTransaction> _sorted(
-    List<FinanceTransaction> transactions,
-  ) =>
-      [...transactions]
-        ..sort((left, right) => left.occurredAt.compareTo(right.occurredAt));
+    List<FinanceTransaction> transactions, {
+    Map<String, String> memberNames = const {},
+  }) {
+    final memberOrder = <String, int>{};
+    var index = 0;
+    for (final uid in memberNames.keys) {
+      memberOrder[uid] = index++;
+    }
+    return [...transactions]..sort((left, right) {
+      if (memberNames.isNotEmpty) {
+        final byMember = (memberOrder[left.createdBy] ?? 9999).compareTo(
+          memberOrder[right.createdBy] ?? 9999,
+        );
+        if (byMember != 0) return byMember;
+      }
+      return left.occurredAt.compareTo(right.occurredAt);
+    });
+  }
 
   static _ExportTotals _totals(List<FinanceTransaction> transactions) {
     int sum(TransactionType type) => transactions

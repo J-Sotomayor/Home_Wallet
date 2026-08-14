@@ -1,19 +1,33 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../app/widgets/app_page_header.dart';
 import '../../../core/errors/app_exception.dart';
 import '../data/finance_repository.dart';
 import '../../households/domain/household_models.dart';
-import '../domain/finance_balances.dart';
 import '../domain/finance_models.dart';
 import '../services/transaction_csv_service.dart';
 import '../services/transaction_export_service.dart';
 
-enum _ReportPeriod { month, custom, all }
+enum _ReportView { month, bank }
+
+enum _BankSelection {
+  pichincha('Pichincha'),
+  guayaquil('Guayaquil');
+
+  const _BankSelection(this.label);
+
+  final String label;
+
+  bool matches(FinanceTransaction transaction) => (transaction.sourceName ?? '')
+      .toLowerCase()
+      .contains(label.toLowerCase());
+}
 
 class FinanceReportsTab extends StatefulWidget {
   const FinanceReportsTab({
@@ -21,11 +35,17 @@ class FinanceReportsTab extends StatefulWidget {
     required this.householdId,
     required this.repository,
     required this.members,
+    this.currentUid = '',
+    this.currentUserName = '',
+    this.householdKind = HouseholdKind.individual,
   });
 
   final String householdId;
   final FinanceRepository repository;
   final Stream<List<HouseholdMember>> members;
+  final String currentUid;
+  final String currentUserName;
+  final HouseholdKind householdKind;
 
   @override
   State<FinanceReportsTab> createState() => _FinanceReportsTabState();
@@ -34,10 +54,10 @@ class FinanceReportsTab extends StatefulWidget {
 class _FinanceReportsTabState extends State<FinanceReportsTab> {
   static const _csv = TransactionCsvService();
   static const _exports = TransactionExportService();
-  _ReportPeriod _period = _ReportPeriod.month;
-  DateTimeRange? _dateRange;
+  _ReportView _view = _ReportView.month;
+  _BankSelection _bank = _BankSelection.pichincha;
   String? _category;
-  String? _memberUid;
+  DateTime? _selectedMonth;
   bool _exporting = false;
 
   @override
@@ -49,82 +69,77 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
           if (transactionSnapshot.hasError) {
             return _ReportError(error: transactionSnapshot.error);
           }
-          return StreamBuilder<List<FinancePlan>>(
-            stream: widget.repository.watchPlans(widget.householdId),
-            builder: (context, planSnapshot) {
-              if (planSnapshot.hasError) {
-                return _ReportError(error: planSnapshot.error);
-              }
-              if (!transactionSnapshot.hasData || !planSnapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              return StreamBuilder<List<HouseholdMember>>(
-                stream: widget.members,
-                builder: (context, memberSnapshot) {
-                  if (memberSnapshot.hasError) {
-                    return _ReportError(error: memberSnapshot.error);
-                  }
-                  if (!memberSnapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final now = DateTime.now();
-                  final all =
-                      transactionSnapshot.data!
-                          .where((transaction) => !transaction.shared)
-                          .toList();
-                  final categories =
-                      all.map((item) => item.category).toSet().toList()..sort();
-                  final transactions =
-                      all.where((item) {
-                        if (_category != null && item.category != _category) {
-                          return false;
-                        }
-                        if (_memberUid != null &&
-                            item.createdBy != _memberUid) {
-                          return false;
-                        }
-                        if (_period == _ReportPeriod.month) {
-                          return item.occurredAt.year == now.year &&
-                              item.occurredAt.month == now.month;
-                        }
-                        if (_period == _ReportPeriod.custom &&
-                            _dateRange != null) {
-                          final start = DateTime(
-                            _dateRange!.start.year,
-                            _dateRange!.start.month,
-                            _dateRange!.start.day,
-                          );
-                          final end = DateTime(
-                            _dateRange!.end.year,
-                            _dateRange!.end.month,
-                            _dateRange!.end.day,
-                            23,
-                            59,
-                            59,
-                          );
-                          return !item.occurredAt.isBefore(start) &&
-                              !item.occurredAt.isAfter(end);
-                        }
-                        return true;
-                      }).toList();
-                  return _ReportBody(
-                    transactions: transactions,
-                    plans: planSnapshot.data!,
-                    members: memberSnapshot.data!,
-                    categories: categories,
-                    period: _period,
-                    dateRange: _dateRange,
-                    category: _category,
-                    memberUid: _memberUid,
-                    onPeriodChanged: _changePeriod,
-                    onCategoryChanged:
-                        (value) => setState(() => _category = value),
-                    onMemberChanged:
-                        (value) => setState(() => _memberUid = value),
-                    exporting: _exporting,
-                    onExport: () => _chooseExport(transactions),
-                  );
-                },
+          if (!transactionSnapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final all =
+              transactionSnapshot.data!
+                  .where((transaction) => transaction.countsInHouseholdFinances)
+                  .toList();
+          final appMonths =
+              all
+                  .where((item) => item.origin == TransactionOrigin.manual)
+                  .map(
+                    (item) =>
+                        DateTime(item.occurredAt.year, item.occurredAt.month),
+                  )
+                  .toSet()
+                  .toList()
+                ..sort((left, right) => right.compareTo(left));
+          final now = DateTime.now();
+          final requestedMonth =
+              _selectedMonth ?? DateTime(now.year, now.month);
+          final reportMonth = appMonths.firstWhere(
+            (month) => _sameMonth(month, requestedMonth),
+            orElse: () => appMonths.isEmpty ? requestedMonth : appMonths.first,
+          );
+          final scoped =
+              all.where((item) {
+                if (_view == _ReportView.month) {
+                  return item.origin == TransactionOrigin.manual &&
+                      _sameMonth(item.occurredAt, reportMonth);
+                }
+                return item.origin == TransactionOrigin.imported &&
+                    _bank.matches(item);
+              }).toList();
+          final categories =
+              scoped.map((item) => item.category).toSet().toList()..sort();
+          final selectedCategory =
+              categories.contains(_category) ? _category : null;
+          final transactions =
+              scoped
+                  .where(
+                    (item) =>
+                        selectedCategory == null ||
+                        item.category == selectedCategory,
+                  )
+                  .toList();
+          return StreamBuilder<List<HouseholdMember>>(
+            stream: widget.members,
+            builder: (context, memberSnapshot) {
+              final members = memberSnapshot.data ?? const <HouseholdMember>[];
+              return _ReportBody(
+                transactions: transactions,
+                categories: categories,
+                availableMonths: appMonths,
+                selectedMonth: reportMonth,
+                view: _view,
+                bank: _bank,
+                category: selectedCategory,
+                onViewChanged: _changeView,
+                onMonthChanged:
+                    (value) => setState(() {
+                      _selectedMonth = value;
+                      _category = null;
+                    }),
+                onBankChanged:
+                    (value) => setState(() {
+                      _bank = value;
+                      _category = null;
+                    }),
+                onCategoryChanged: (value) => setState(() => _category = value),
+                exporting: _exporting,
+                onExport: () => _chooseExport(transactions, members),
               );
             },
           );
@@ -133,39 +148,41 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
     );
   }
 
-  Future<void> _changePeriod(_ReportPeriod value) async {
-    if (value != _ReportPeriod.custom) {
-      setState(() => _period = value);
-      return;
-    }
-    final range = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(2000),
-      lastDate: DateTime.now().add(const Duration(days: 366)),
-      initialDateRange: _dateRange,
-      helpText: 'Período del reporte',
-    );
-    if (range != null && mounted) {
-      setState(() {
-        _dateRange = range;
-        _period = _ReportPeriod.custom;
-      });
-    }
+  void _changeView(_ReportView value) {
+    setState(() {
+      _view = value;
+      _category = null;
+    });
   }
 
   Future<void> _chooseExport(
     List<FinanceTransaction> filteredTransactions,
+    List<HouseholdMember> members,
   ) async {
     if (filteredTransactions.isEmpty || _exporting) return;
     final choice = await showModalBottomSheet<_ExportChoice>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => _ExportSheet(transactions: filteredTransactions),
+      builder:
+          (context) => _ExportSheet(
+            transactions: filteredTransactions,
+            members: members,
+            currentUid: widget.currentUid,
+            currentUserName: widget.currentUserName,
+            householdKind: widget.householdKind,
+          ),
     );
     if (choice == null || !mounted) return;
 
-    final selected = transactionsForExport(filteredTransactions, choice.scope);
+    final selected =
+        transactionsForExport(filteredTransactions, choice.scope)
+            .where(
+              (item) =>
+                  choice.memberUids.isEmpty ||
+                  choice.memberUids.contains(item.createdBy),
+            )
+            .toList();
     if (selected.isEmpty) {
       _showMessage(
         'No hay movimientos de ese origen con los filtros actuales.',
@@ -176,9 +193,18 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
     setState(() => _exporting = true);
     try {
       final Uint8List bytes = switch (choice.format) {
-        _ExportFormat.excel => _exports.exportExcel(selected),
-        _ExportFormat.pdf => await _exports.exportPdf(selected),
-        _ExportFormat.csv => _csv.exportBytes(selected),
+        _ExportFormat.excel => _exports.exportExcel(
+          selected,
+          memberNames: choice.memberNames,
+        ),
+        _ExportFormat.pdf => await _exports.exportPdf(
+          selected,
+          memberNames: choice.memberNames,
+        ),
+        _ExportFormat.csv => _csv.exportBytes(
+          selected,
+          memberNames: choice.memberNames,
+        ),
       };
       final extension = choice.format.extension;
       final date = DateFormat('yyyy-MM-dd').format(DateTime.now());
@@ -215,31 +241,31 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 class _ReportBody extends StatelessWidget {
   const _ReportBody({
     required this.transactions,
-    required this.plans,
-    required this.period,
-    required this.members,
     required this.categories,
-    required this.dateRange,
+    required this.availableMonths,
+    required this.selectedMonth,
+    required this.view,
+    required this.bank,
     required this.category,
-    required this.memberUid,
-    required this.onPeriodChanged,
+    required this.onViewChanged,
+    required this.onMonthChanged,
+    required this.onBankChanged,
     required this.onCategoryChanged,
-    required this.onMemberChanged,
     required this.exporting,
     required this.onExport,
   });
 
   final List<FinanceTransaction> transactions;
-  final List<FinancePlan> plans;
-  final _ReportPeriod period;
-  final List<HouseholdMember> members;
   final List<String> categories;
-  final DateTimeRange? dateRange;
+  final List<DateTime> availableMonths;
+  final DateTime selectedMonth;
+  final _ReportView view;
+  final _BankSelection bank;
   final String? category;
-  final String? memberUid;
-  final Future<void> Function(_ReportPeriod) onPeriodChanged;
+  final ValueChanged<_ReportView> onViewChanged;
+  final ValueChanged<DateTime> onMonthChanged;
+  final ValueChanged<_BankSelection> onBankChanged;
   final ValueChanged<String?> onCategoryChanged;
-  final ValueChanged<String?> onMemberChanged;
   final bool exporting;
   final VoidCallback onExport;
 
@@ -247,21 +273,7 @@ class _ReportBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final income = _total(TransactionType.income);
     final expenses = _total(TransactionType.expense);
-    final savings = _total(TransactionType.saving);
-    final balances = FinanceBalances.calculate(transactions, plans);
-    final imported =
-        transactions
-            .where((item) => item.origin == TransactionOrigin.imported)
-            .toList();
-    final verified = imported.where((item) => item.sourceVerified).length;
-    final sourceCounts = <String, int>{};
-    for (final item in imported) {
-      sourceCounts.update(
-        item.sourceName ?? 'Archivo importado',
-        (value) => value + 1,
-        ifAbsent: () => 1,
-      );
-    }
+    final balance = income - expenses;
     final categoryTotals = <String, int>{};
     for (final item in transactions.where(
       (item) => item.type == TransactionType.expense,
@@ -275,115 +287,139 @@ class _ReportBody extends StatelessWidget {
     final rankedCategories =
         categoryTotals.entries.toList()
           ..sort((a, b) => b.value.compareTo(a.value));
-    final tips = _tips(
+    final priority = const ['Agua', 'Luz', 'Internet'];
+    final destinationCategories = <MapEntry<String, int>>[
+      ...priority
+          .where(categoryTotals.containsKey)
+          .map((name) => MapEntry(name, categoryTotals[name]!)),
+      ...rankedCategories.where((entry) => !priority.contains(entry.key)),
+    ];
+    final dates = transactions.map((item) => item.occurredAt).toList()..sort();
+    final otherExpense =
+        (categoryTotals['Otro'] ?? 0) + (categoryTotals['Otros'] ?? 0);
+    final tips = _buildTips(
       income: income,
       expenses: expenses,
-      savings: savings,
-      otherExpense: categoryTotals['Otro'] ?? 0,
-      unverifiedImports: imported.length - verified,
+      otherExpense: otherExpense,
+      topCategory: rankedCategories.isEmpty ? null : rankedCategories.first.key,
     );
     final scheme = Theme.of(context).colorScheme;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 22, 20, 110),
       children: [
-        Text('Reportes', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 4),
-        const Text(
-          'Entiende tu dinero, comprueba lo importado y recibe recomendaciones claras.',
+        const AppPageHeader(
+          icon: Icons.query_stats_outlined,
+          title: 'Reportes',
+          subtitle:
+              'Entiende tu dinero, comprueba lo importado y recibe recomendaciones claras.',
         ),
         const SizedBox(height: 18),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          child: SegmentedButton<_ReportPeriod>(
+          child: SegmentedButton<_ReportView>(
             segments: const [
               ButtonSegment(
-                value: _ReportPeriod.month,
-                label: Text('Este mes'),
+                value: _ReportView.month,
+                label: Text('Por mes'),
                 icon: Icon(Icons.calendar_month_outlined),
               ),
               ButtonSegment(
-                value: _ReportPeriod.custom,
-                label: Text('Fechas'),
-                icon: Icon(Icons.date_range_outlined),
-              ),
-              ButtonSegment(
-                value: _ReportPeriod.all,
-                label: Text('Histórico'),
-                icon: Icon(Icons.history),
+                value: _ReportView.bank,
+                label: Text('Imp. bancarias'),
+                icon: Icon(Icons.account_balance_outlined),
               ),
             ],
-            selected: {period},
-            onSelectionChanged:
-                (values) => unawaited(onPeriodChanged(values.first)),
+            selected: {view},
+            onSelectionChanged: (values) => onViewChanged(values.first),
           ),
         ),
-        if (period == _ReportPeriod.custom && dateRange != null) ...[
-          const SizedBox(height: 8),
+        if (view == _ReportView.month) ...[
+          const SizedBox(height: 14),
+          DropdownButtonFormField<DateTime>(
+            key: const Key('report_month_filter'),
+            value: selectedMonth,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Mes del reporte',
+              prefixIcon: Icon(Icons.calendar_view_month_outlined),
+            ),
+            items:
+                (availableMonths.isEmpty
+                        ? <DateTime>[selectedMonth]
+                        : availableMonths)
+                    .map(
+                      (month) => DropdownMenuItem<DateTime>(
+                        value: month,
+                        child: Text(_monthLabel(month)),
+                      ),
+                    )
+                    .toList(),
+            onChanged:
+                availableMonths.isEmpty
+                    ? null
+                    : (value) {
+                      if (value != null) onMonthChanged(value);
+                    },
+          ),
+          const SizedBox(height: 5),
           Text(
-            '${DateFormat('dd/MM/yyyy').format(dateRange!.start)} – ${DateFormat('dd/MM/yyyy').format(dateRange!.end)}',
+            'Los datos registrados en HomeWallet están separados por mes.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
+        if (view == _ReportView.bank) ...[
+          const SizedBox(height: 18),
+          Text(
+            'Importaciones bancarias',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 5),
+          const Text('¿Qué banco quieres ver?'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children:
+                _BankSelection.values
+                    .map(
+                      (value) => ChoiceChip(
+                        label: Text(value.label),
+                        selected: bank == value,
+                        onSelected: (selected) {
+                          if (selected) onBankChanged(value);
+                        },
+                      ),
+                    )
+                    .toList(),
+          ),
+          if (dates.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Período del archivo: ${DateFormat('dd/MM/yyyy').format(dates.first)} – ${DateFormat('dd/MM/yyyy').format(dates.last)}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ],
         const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final categoryField = DropdownButtonFormField<String?>(
-              value: category,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Categoría'),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Todas'),
-                ),
-                ...categories.map(
-                  (value) => DropdownMenuItem<String?>(
-                    value: value,
-                    child: Text(value, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              ],
-              onChanged: onCategoryChanged,
-            );
-            final memberField = DropdownButtonFormField<String?>(
-              value: memberUid,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Integrante'),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Todos'),
-                ),
-                ...members.map(
-                  (member) => DropdownMenuItem<String?>(
-                    value: member.uid,
-                    child: Text(
-                      member.displayName,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: onMemberChanged,
-            );
-            if (constraints.maxWidth < 420) {
-              return Column(
-                children: [
-                  categoryField,
-                  const SizedBox(height: 12),
-                  memberField,
-                ],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(child: categoryField),
-                const SizedBox(width: 12),
-                Expanded(child: memberField),
-              ],
-            );
-          },
+        DropdownButtonFormField<String?>(
+          value: category,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Categoría'),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Todas las categorías'),
+            ),
+            ...categories.map(
+              (value) => DropdownMenuItem<String?>(
+                value: value,
+                child: Text(value, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+          ],
+          onChanged: onCategoryChanged,
         ),
         const SizedBox(height: 12),
         Card(
@@ -410,7 +446,7 @@ class _ReportBody extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Usará el periodo, la categoría y el integrante seleccionados arriba.',
+                  'Usará únicamente los datos de la vista y categoría seleccionadas.',
                 ),
                 const SizedBox(height: 12),
                 FilledButton.tonalIcon(
@@ -436,6 +472,10 @@ class _ReportBody extends StatelessWidget {
         if (transactions.isEmpty)
           const _EmptyReport()
         else ...[
+          if (view == _ReportView.bank) ...[
+            _BankTrendChart(transactions: transactions, bank: bank),
+            const SizedBox(height: 16),
+          ],
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -450,12 +490,12 @@ class _ReportBody extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Resultado disponible',
+                  'Resultado',
                   style: TextStyle(color: Colors.white70),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _money(balances.available),
+                  _money(balance),
                   style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
@@ -478,73 +518,19 @@ class _ReportBody extends StatelessWidget {
                         icon: Icons.north_east,
                       ),
                     ),
-                    Expanded(
-                      child: _ReportMetric(
-                        label: 'Ahorros',
-                        value: savings,
-                        icon: Icons.savings_outlined,
-                      ),
-                    ),
                   ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Ahorros disponibles: ${_money(balances.savings)} · Metas: ${_money(balances.goals)}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
           _SectionCard(
-            icon: Icons.fact_check_outlined,
-            title: 'Calidad de los datos',
-            children: [
-              _StatusRow(
-                icon: Icons.edit_note_outlined,
-                label: 'Registrados manualmente',
-                value: '${transactions.length - imported.length}',
-              ),
-              _StatusRow(
-                icon: Icons.file_upload_outlined,
-                label: 'Importados desde banco',
-                value: '${imported.length}',
-              ),
-              _StatusRow(
-                icon:
-                    imported.isEmpty || verified == imported.length
-                        ? Icons.verified_outlined
-                        : Icons.info_outline,
-                label: 'Totales bancarios validados',
-                value:
-                    imported.isEmpty
-                        ? 'Sin archivos'
-                        : '$verified/${imported.length}',
-                positive: imported.isEmpty || verified == imported.length,
-              ),
-              if (sourceCounts.isNotEmpty) ...[
-                const Divider(height: 24),
-                ...sourceCounts.entries.map(
-                  (entry) => _StatusRow(
-                    icon: Icons.account_balance_outlined,
-                    label: entry.key,
-                    value: '${entry.value} mov.',
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 16),
-          _SectionCard(
             icon: Icons.donut_large_outlined,
             title: 'Destino de los gastos',
             children:
-                rankedCategories.isEmpty
+                destinationCategories.isEmpty
                     ? const [Text('No hay gastos en este periodo.')]
-                    : rankedCategories
+                    : destinationCategories
                         .take(7)
                         .map(
                           (entry) => Padding(
@@ -571,7 +557,7 @@ class _ReportBody extends StatelessWidget {
           const SizedBox(height: 16),
           _SectionCard(
             icon: Icons.lightbulb_outline,
-            title: 'Consejos para tu hogar',
+            title: 'Consejos',
             children:
                 tips
                     .map(
@@ -594,12 +580,6 @@ class _ReportBody extends StatelessWidget {
                     )
                     .toList(),
           ),
-          const SizedBox(height: 16),
-          _SectionCard(
-            icon: Icons.flag_outlined,
-            title: 'Planes y metas',
-            children: _goalRows(),
-          ),
         ],
       ],
     );
@@ -609,105 +589,37 @@ class _ReportBody extends StatelessWidget {
       .where((item) => item.type == type)
       .fold(0, (sum, item) => sum + item.amountMinor);
 
-  List<Widget> _goalRows() {
-    final active = plans.where((plan) => plan.isActive).toList();
-    if (active.isEmpty) {
-      return const [Text('Todavía no existen planes activos.')];
-    }
-    return active.map((plan) {
-      final current = automaticPlanProgress(plan, transactions, DateTime.now());
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(child: Text(plan.name)),
-                Text(
-                  '${(current / plan.targetMinor * 100).clamp(0, 999).toStringAsFixed(0)}%',
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            LinearProgressIndicator(
-              value: (current / plan.targetMinor).clamp(0, 1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${_money(current)} de ${_money(plan.targetMinor)}',
-              style: const TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-      );
-    }).toList();
-  }
-
-  static List<_Tip> _tips({
+  static List<_Tip> _buildTips({
     required int income,
     required int expenses,
-    required int savings,
     required int otherExpense,
-    required int unverifiedImports,
+    required String? topCategory,
   }) {
     final result = <_Tip>[];
-    if (income == 0) {
-      result.add(
-        const _Tip(
-          Icons.add_chart,
-          'Registra los ingresos del periodo para calcular tasas y saldo real.',
-          true,
-        ),
-      );
-    } else {
-      final expenseRate = expenses / income;
-      final savingRate = (savings / income).clamp(0.0, 1.0);
-      result.add(
-        _Tip(
-          expenseRate > .8 ? Icons.warning_amber : Icons.check_circle_outline,
-          expenseRate > .8
-              ? 'Los gastos consumen ${(expenseRate * 100).toStringAsFixed(0)}% de tus ingresos. Revisa primero la categoría más alta.'
-              : 'Tus gastos representan ${(expenseRate * 100).toStringAsFixed(0)}% de los ingresos del periodo.',
-          expenseRate > .8,
-        ),
-      );
-      if (savings > income) {
-        result.add(
-          const _Tip(
-            Icons.info_outline,
-            'Los ahorros del período superan los ingresos registrados. Puede incluir dinero acumulado antes; revisa el período para interpretar la tasa.',
-            false,
-          ),
-        );
-      }
-      result.add(
-        _Tip(
-          savingRate >= .1 ? Icons.savings_outlined : Icons.trending_up,
-          savingRate >= .1
-              ? 'Ahorraste ${(savingRate * 100).toStringAsFixed(0)}% de tus ingresos. Mantén ese hábito.'
-              : 'Intenta asignar al menos una parte fija de cada ingreso a una meta.',
-          false,
-        ),
-      );
-    }
-    if (expenses > 0 && otherExpense / expenses > .25) {
+    if (otherExpense > 0) {
       result.add(
         const _Tip(
           Icons.category_outlined,
-          'Hay muchos gastos en “Otro”. Clasificarlos mejora el análisis y los consejos.',
+          '¿Qué se fue a “Otros”? Revisa esos movimientos y asígnales una categoría más específica.',
           true,
         ),
       );
     }
-    if (unverifiedImports > 0) {
+    if (topCategory != null) {
+      result.add(
+        _Tip(
+          Icons.trending_up,
+          'Mejora tus hábitos: revisa primero $topCategory, que concentra el mayor gasto del período.',
+          false,
+        ),
+      );
+    }
+    if (income > 0 && expenses > income) {
       result.add(
         const _Tip(
-          Icons.info_outline,
-          'Hay archivos sin totales declarados. Los movimientos son válidos, pero conviene compararlos con el saldo del banco.',
-          false,
+          Icons.warning_amber_outlined,
+          'Los gastos superan los ingresos de este período. Revisa pagos repetidos o consumos que puedas reducir.',
+          true,
         ),
       );
     }
@@ -715,13 +627,139 @@ class _ReportBody extends StatelessWidget {
       result.add(
         const _Tip(
           Icons.auto_awesome_outlined,
-          'Los datos del periodo están equilibrados. Continúa registrando cada movimiento.',
+          'Mejora tus hábitos revisando cada semana los gastos y sus categorías.',
           false,
         ),
       );
     }
     return result;
   }
+}
+
+class _BankTrendChart extends StatelessWidget {
+  const _BankTrendChart({required this.transactions, required this.bank});
+
+  final List<FinanceTransaction> transactions;
+  final _BankSelection bank;
+
+  @override
+  Widget build(BuildContext context) {
+    final byDay = <DateTime, int>{};
+    for (final item in transactions) {
+      final day = DateTime(
+        item.occurredAt.year,
+        item.occurredAt.month,
+        item.occurredAt.day,
+      );
+      final signed =
+          item.type == TransactionType.income
+              ? item.amountMinor
+              : -item.amountMinor;
+      byDay.update(day, (value) => value + signed, ifAbsent: () => signed);
+    }
+    final entries =
+        byDay.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    var running = 0;
+    final points = <double>[];
+    for (final entry in entries) {
+      running += entry.value;
+      points.add(running.toDouble());
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return _SectionCard(
+      icon: Icons.show_chart,
+      title: 'Evolución · ${bank.label}',
+      children: [
+        SizedBox(
+          height: 180,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _TrendPainter(
+              values: points,
+              lineColor: scheme.primary,
+              fillColor: scheme.primaryContainer,
+              gridColor: scheme.outlineVariant,
+            ),
+          ),
+        ),
+        if (entries.isNotEmpty)
+          Row(
+            children: [
+              Text(DateFormat('dd/MM').format(entries.first.key)),
+              const Spacer(),
+              Text(DateFormat('dd/MM').format(entries.last.key)),
+            ],
+          ),
+        const SizedBox(height: 6),
+        const Text(
+          'Variación acumulada de ingresos y gastos del estado de cuenta.',
+          style: TextStyle(fontSize: 12),
+        ),
+      ],
+    );
+  }
+}
+
+class _TrendPainter extends CustomPainter {
+  const _TrendPainter({
+    required this.values,
+    required this.lineColor,
+    required this.fillColor,
+    required this.gridColor,
+  });
+
+  final List<double> values;
+  final Color lineColor;
+  final Color fillColor;
+  final Color gridColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()..color = gridColor;
+    for (var row = 0; row <= 3; row++) {
+      final y = size.height * row / 3;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    if (values.isEmpty) return;
+    final minValue = math.min(0, values.reduce(math.min));
+    final maxValue = math.max(0, values.reduce(math.max));
+    final span = math.max(1, maxValue - minValue);
+    final path = Path();
+    for (var index = 0; index < values.length; index++) {
+      final x =
+          values.length == 1
+              ? size.width / 2
+              : size.width * index / (values.length - 1);
+      final y = size.height - ((values[index] - minValue) / span * size.height);
+      if (index == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final fill =
+        Path.from(path)
+          ..lineTo(size.width, size.height)
+          ..lineTo(0, size.height)
+          ..close();
+    canvas.drawPath(fill, Paint()..color = fillColor.withValues(alpha: .5));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = lineColor
+        ..strokeWidth = 3
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrendPainter oldDelegate) =>
+      oldDelegate.values != values ||
+      oldDelegate.lineColor != lineColor ||
+      oldDelegate.fillColor != fillColor ||
+      oldDelegate.gridColor != gridColor;
 }
 
 enum _ExportFormat {
@@ -749,15 +787,6 @@ extension on TransactionExportScope {
     TransactionExportScope.all => 'Todos los movimientos',
   };
 
-  String get description => switch (this) {
-    TransactionExportScope.homeWallet =>
-      'Incluye los creados manualmente y los programados. Excluye archivos bancarios.',
-    TransactionExportScope.imported =>
-      'Incluye únicamente los movimientos traídos desde estados de cuenta.',
-    TransactionExportScope.all =>
-      'Combina los registrados en la app y los importados desde bancos.',
-  };
-
   String get fileLabel => switch (this) {
     TransactionExportScope.homeWallet => 'registrados',
     TransactionExportScope.imported => 'importados',
@@ -772,30 +801,115 @@ extension on TransactionExportScope {
 }
 
 class _ExportChoice {
-  const _ExportChoice({required this.scope, required this.format});
+  const _ExportChoice({
+    required this.scope,
+    required this.format,
+    required this.memberUids,
+    required this.memberNames,
+  });
 
   final TransactionExportScope scope;
   final _ExportFormat format;
+  final Set<String> memberUids;
+  final Map<String, String> memberNames;
 }
 
+enum _PeopleExportMode { mine, household, selected }
+
 class _ExportSheet extends StatefulWidget {
-  const _ExportSheet({required this.transactions});
+  const _ExportSheet({
+    required this.transactions,
+    required this.members,
+    required this.currentUid,
+    required this.currentUserName,
+    required this.householdKind,
+  });
 
   final List<FinanceTransaction> transactions;
+  final List<HouseholdMember> members;
+  final String currentUid;
+  final String currentUserName;
+  final HouseholdKind householdKind;
 
   @override
   State<_ExportSheet> createState() => _ExportSheetState();
 }
 
 class _ExportSheetState extends State<_ExportSheet> {
-  TransactionExportScope _scope = TransactionExportScope.homeWallet;
+  late TransactionExportScope _scope;
+  _PeopleExportMode _peopleMode = _PeopleExportMode.mine;
+  final Set<String> _selectedMemberUids = {};
 
-  int _count(TransactionExportScope scope) =>
-      transactionsForExport(widget.transactions, scope).length;
+  @override
+  void initState() {
+    super.initState();
+    _scope =
+        widget.transactions.every(
+              (item) => item.origin == TransactionOrigin.imported,
+            )
+            ? TransactionExportScope.imported
+            : TransactionExportScope.homeWallet;
+    if (widget.currentUid.isNotEmpty) {
+      _selectedMemberUids.add(widget.currentUid);
+    }
+  }
+
+  Map<String, String> get _memberNames {
+    final result = <String, String>{};
+    if (widget.currentUid.isNotEmpty) {
+      result[widget.currentUid] =
+          widget.currentUserName.trim().isEmpty
+              ? 'Yo'
+              : widget.currentUserName.trim();
+    }
+    for (final member in widget.members) {
+      result[member.uid] = member.displayName;
+    }
+    for (final transaction in widget.transactions) {
+      result.putIfAbsent(transaction.createdBy, () => 'Integrante');
+    }
+    return result;
+  }
+
+  bool get _isSharedHousehold =>
+      widget.householdKind != HouseholdKind.individual &&
+      _memberNames.length > 1;
+
+  Set<String> get _selectedUids {
+    if (!_isSharedHousehold) {
+      return widget.currentUid.isEmpty ? const {} : {widget.currentUid};
+    }
+    return switch (_peopleMode) {
+      _PeopleExportMode.mine => {widget.currentUid},
+      _PeopleExportMode.household => _memberNames.keys.toSet(),
+      _PeopleExportMode.selected => _selectedMemberUids,
+    };
+  }
+
+  List<FinanceTransaction> get _selectedTransactions =>
+      transactionsForExport(widget.transactions, _scope)
+          .where(
+            (item) =>
+                _selectedUids.isEmpty || _selectedUids.contains(item.createdBy),
+          )
+          .toList();
+
+  _ExportChoice _choice(_ExportFormat format) => _ExportChoice(
+    scope: _scope,
+    format: format,
+    memberUids: _selectedUids,
+    memberNames: _memberNames,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final selectedCount = _count(_scope);
+    final selectedCount = _selectedTransactions.length;
+    final orderedMembers =
+        _memberNames.entries.toList()..sort((left, right) {
+          if (left.key == widget.currentUid) return -1;
+          if (right.key == widget.currentUid) return 1;
+          return left.value.compareTo(right.value);
+        });
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
@@ -809,26 +923,104 @@ class _ExportSheetState extends State<_ExportSheet> {
             ),
             const SizedBox(height: 5),
             const Text(
-              'El periodo y los filtros ya están aplicados. Ahora elige el origen de los datos.',
+              'El periodo, el origen y la categoría ya están aplicados. Elige de quién será el reporte.',
             ),
             const SizedBox(height: 18),
-            Text(
-              '1. ¿Qué quieres incluir?',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            ...TransactionExportScope.values.map(
-              (scope) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _ExportScopeTile(
-                  key: ValueKey('export_scope_${scope.name}'),
-                  scope: scope,
-                  count: _count(scope),
-                  selected: _scope == scope,
-                  onTap: () => setState(() => _scope = scope),
+            Card(
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: ListTile(
+                leading: Icon(_scope.icon),
+                title: Text(_scope.title),
+                subtitle: const Text(
+                  'Definido por la vista actual del reporte.',
                 ),
               ),
             ),
+            const SizedBox(height: 10),
+            Text(
+              '1. ¿De quién quieres descargar los datos?',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            if (!_isSharedHousehold)
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(
+                    widget.currentUserName.trim().isEmpty
+                        ? 'Mi reporte individual'
+                        : widget.currentUserName,
+                  ),
+                  subtitle: const Text('Solo incluye tus registros.'),
+                  trailing: const Icon(Icons.check_circle),
+                ),
+              )
+            else ...[
+              RadioListTile<_PeopleExportMode>(
+                value: _PeopleExportMode.mine,
+                groupValue: _peopleMode,
+                title: const Text('Solo mis datos'),
+                subtitle: Text(
+                  _memberNames[widget.currentUid] ?? 'Usuario actual',
+                ),
+                onChanged: (value) => setState(() => _peopleMode = value!),
+              ),
+              RadioListTile<_PeopleExportMode>(
+                value: _PeopleExportMode.household,
+                groupValue: _peopleMode,
+                title: const Text('Todo el hogar'),
+                subtitle: const Text(
+                  'Primero aparecerán tus datos y después los de cada integrante, separados por nombre.',
+                ),
+                onChanged: (value) => setState(() => _peopleMode = value!),
+              ),
+              RadioListTile<_PeopleExportMode>(
+                value: _PeopleExportMode.selected,
+                groupValue: _peopleMode,
+                title: const Text('Elegir integrantes'),
+                subtitle: const Text('Selecciona una o varias personas.'),
+                onChanged:
+                    (value) => setState(() {
+                      _peopleMode = value!;
+                      if (_selectedMemberUids.isEmpty &&
+                          widget.currentUid.isNotEmpty) {
+                        _selectedMemberUids.add(widget.currentUid);
+                      }
+                    }),
+              ),
+              if (_peopleMode == _PeopleExportMode.selected)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children:
+                        orderedMembers
+                            .map(
+                              (member) => FilterChip(
+                                label: Text(
+                                  member.key == widget.currentUid
+                                      ? '${member.value} (yo)'
+                                      : member.value,
+                                ),
+                                selected: _selectedMemberUids.contains(
+                                  member.key,
+                                ),
+                                onSelected:
+                                    (selected) => setState(() {
+                                      if (selected) {
+                                        _selectedMemberUids.add(member.key);
+                                      } else {
+                                        _selectedMemberUids.remove(member.key);
+                                      }
+                                    }),
+                              ),
+                            )
+                            .toList(),
+                  ),
+                ),
+            ],
             const SizedBox(height: 10),
             Text(
               '2. ¿En qué formato?',
@@ -855,13 +1047,8 @@ class _ExportSheetState extends State<_ExportSheet> {
               onPressed:
                   selectedCount == 0
                       ? null
-                      : () => Navigator.pop(
-                        context,
-                        _ExportChoice(
-                          scope: _scope,
-                          format: _ExportFormat.excel,
-                        ),
-                      ),
+                      : () =>
+                          Navigator.pop(context, _choice(_ExportFormat.excel)),
               icon: const Icon(Icons.table_view_outlined),
               label: const Text('Guardar como Excel'),
             ),
@@ -876,10 +1063,7 @@ class _ExportSheetState extends State<_ExportSheet> {
                             ? null
                             : () => Navigator.pop(
                               context,
-                              _ExportChoice(
-                                scope: _scope,
-                                format: _ExportFormat.pdf,
-                              ),
+                              _choice(_ExportFormat.pdf),
                             ),
                     icon: const Icon(Icons.picture_as_pdf_outlined),
                     label: const Text('PDF'),
@@ -894,10 +1078,7 @@ class _ExportSheetState extends State<_ExportSheet> {
                             ? null
                             : () => Navigator.pop(
                               context,
-                              _ExportChoice(
-                                scope: _scope,
-                                format: _ExportFormat.csv,
-                              ),
+                              _choice(_ExportFormat.csv),
                             ),
                     icon: const Icon(Icons.data_object_outlined),
                     label: const Text('CSV'),
@@ -906,71 +1087,6 @@ class _ExportSheetState extends State<_ExportSheet> {
               ],
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ExportScopeTile extends StatelessWidget {
-  const _ExportScopeTile({
-    super.key,
-    required this.scope,
-    required this.count,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final TransactionExportScope scope;
-  final int count;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: selected ? scheme.primaryContainer : scheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(scope.icon, color: selected ? scheme.primary : null),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      scope.title,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      scope.description,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Column(
-                children: [
-                  Text(
-                    '$count',
-                    style: const TextStyle(fontWeight: FontWeight.w900),
-                  ),
-                  if (selected)
-                    Icon(Icons.check_circle, size: 18, color: scheme.primary),
-                ],
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -1011,40 +1127,6 @@ class _SectionCard extends StatelessWidget {
           ...children,
         ],
       ),
-    ),
-  );
-}
-
-class _StatusRow extends StatelessWidget {
-  const _StatusRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.positive = true,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final bool positive;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Row(
-      children: [
-        Icon(
-          icon,
-          size: 20,
-          color:
-              positive
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.error,
-        ),
-        const SizedBox(width: 10),
-        Expanded(child: Text(label)),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-      ],
     ),
   );
 }
@@ -1140,3 +1222,24 @@ String _money(int minor) => NumberFormat.currency(
   symbol: r'$',
   decimalDigits: 2,
 ).format(minor / 100);
+
+bool _sameMonth(DateTime left, DateTime right) =>
+    left.year == right.year && left.month == right.month;
+
+String _monthLabel(DateTime value) {
+  const months = [
+    'Enero',
+    'Febrero',
+    'Marzo',
+    'Abril',
+    'Mayo',
+    'Junio',
+    'Julio',
+    'Agosto',
+    'Septiembre',
+    'Octubre',
+    'Noviembre',
+    'Diciembre',
+  ];
+  return '${months[value.month - 1]} ${value.year}';
+}

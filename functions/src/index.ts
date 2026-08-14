@@ -198,7 +198,7 @@ export const createHousehold = onCall(async (request) => {
   const uid = requireVerifiedUser(request);
   const data = requestMap(request);
   const requestedKind = data.kind;
-  const kind = ["family", "couple", "group"].includes(requestedKind as string) ?
+  const kind = ["individual", "family", "couple", "group"].includes(requestedKind as string) ?
     requestedKind as string : "family";
   await enforceRateLimit(uid, "createHousehold", 10_000);
 
@@ -637,7 +637,7 @@ export const processAccountDeletions = onSchedule({
 });
 
 export const notifyDueRecurring = onSchedule({
-  schedule: "every 60 minutes",
+  schedule: "every 15 minutes",
   region: primaryRegion,
   timeZone: "America/Guayaquil",
 }, async () => {
@@ -664,11 +664,11 @@ export const notifyDueRecurring = onSchedule({
       await sendPushToUsers(
         [data.createdBy],
         data.confirmBeforePosting === true ?
-          "Movimiento recurrente pendiente" :
-          "Movimiento recurrente listo",
+          "Registro recurrente pendiente" :
+          "Registro recurrente listo",
         data.confirmBeforePosting === true ?
-          "Abre HomeWallet para revisarlo y registrarlo." :
-          "Se registrará automáticamente cuando abras HomeWallet.",
+          "Abre HomeWallet para revisarlo y validarlo." :
+          "Se validará automáticamente cuando abras HomeWallet.",
         {householdId, type: "recurring-due", recurringId: recurring.id},
       );
     } catch (error) {

@@ -12,8 +12,9 @@ class FinanceBalances {
 
   factory FinanceBalances.calculate(
     List<FinanceTransaction> transactions,
-    List<FinancePlan> plans,
-  ) {
+    List<FinancePlan> plans, {
+    DateTime? currentPeriod,
+  }) {
     var income = 0;
     var generalExpenses = 0;
     var expenses = 0;
@@ -24,7 +25,11 @@ class FinanceBalances {
     for (final transaction in transactions) {
       // Legacy shared transactions are reimbursement calculations, not cash
       // flow. New bill splits live in their own collection.
-      if (transaction.shared) continue;
+      if (!transaction.countsInHouseholdFinances) continue;
+      if (currentPeriod != null &&
+          !transaction.affectsLiveBalanceAt(currentPeriod)) {
+        continue;
+      }
       switch (transaction.type) {
         case TransactionType.income:
           income += transaction.amountMinor;
@@ -89,7 +94,7 @@ int automaticPlanProgress(
   return transactions
       .where(
         (item) =>
-            !item.shared &&
+            item.countsInHouseholdFinances &&
             item.type == TransactionType.expense &&
             item.occurredAt.year == now.year &&
             item.occurredAt.month == now.month &&
@@ -129,7 +134,7 @@ FinancePlanProgress calculatePlanProgress(
 ) {
   final relevant =
       transactions.where((item) {
-          if (item.shared) return false;
+          if (!item.countsInHouseholdFinances) return false;
           if (plan.kind == FinancePlanKind.goal) {
             return item.linkedPlanId == plan.id && item.planDeltaMinor != 0;
           }

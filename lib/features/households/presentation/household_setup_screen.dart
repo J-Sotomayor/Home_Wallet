@@ -202,79 +202,30 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                             const SizedBox(height: AppSpacing.xs),
                             LayoutBuilder(
                               builder: (context, constraints) {
-                                final compact = constraints.maxWidth < 330;
-                                return SegmentedButton<HouseholdKind>(
-                                  segments: [
-                                    ButtonSegment(
-                                      value: HouseholdKind.family,
-                                      label: const Text('Familia'),
-                                      icon:
-                                          compact
-                                              ? null
-                                              : const Icon(
-                                                Icons.family_restroom,
+                                final width = (constraints.maxWidth - 8) / 2;
+                                return Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children:
+                                      HouseholdKind.values
+                                          .map(
+                                            (kind) => SizedBox(
+                                              width: width,
+                                              child: _HouseholdKindOption(
+                                                key: Key(
+                                                  'household_kind_${kind.name}',
+                                                ),
+                                                kind: kind,
+                                                selected: _kind == kind,
+                                                enabled: !_busy,
+                                                onTap:
+                                                    () => setState(
+                                                      () => _kind = kind,
+                                                    ),
                                               ),
-                                    ),
-                                    ButtonSegment(
-                                      value: HouseholdKind.couple,
-                                      label: const Text('Pareja'),
-                                      icon:
-                                          compact
-                                              ? null
-                                              : const Icon(
-                                                Icons.favorite_outline,
-                                              ),
-                                    ),
-                                    ButtonSegment(
-                                      value: HouseholdKind.group,
-                                      label: const Text('Grupo'),
-                                      icon:
-                                          compact
-                                              ? null
-                                              : const Icon(
-                                                Icons.groups_outlined,
-                                              ),
-                                    ),
-                                  ],
-                                  selected: {_kind},
-                                  style: ButtonStyle(
-                                    foregroundColor:
-                                        WidgetStateProperty.resolveWith(
-                                          (states) =>
-                                              states.contains(
-                                                    WidgetState.selected,
-                                                  )
-                                                  ? scheme.onPrimary
-                                                  : states.contains(
-                                                    WidgetState.disabled,
-                                                  )
-                                                  ? scheme.onSurfaceVariant
-                                                  : scheme.onSurface,
-                                        ),
-                                    backgroundColor:
-                                        WidgetStateProperty.resolveWith(
-                                          (states) =>
-                                              states.contains(
-                                                    WidgetState.selected,
-                                                  )
-                                                  ? scheme.primary
-                                                  : scheme
-                                                      .surfaceContainerHighest,
-                                        ),
-                                    side: WidgetStatePropertyAll(
-                                      BorderSide(color: scheme.outline),
-                                    ),
-                                    visualDensity:
-                                        compact
-                                            ? VisualDensity.compact
-                                            : VisualDensity.standard,
-                                  ),
-                                  onSelectionChanged:
-                                      _busy
-                                          ? null
-                                          : (value) => setState(
-                                            () => _kind = value.first,
-                                          ),
+                                            ),
+                                          )
+                                          .toList(),
                                 );
                               },
                             ),
@@ -374,5 +325,70 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  static IconData _kindIcon(HouseholdKind kind) => switch (kind) {
+    HouseholdKind.individual => Icons.person_outline,
+    HouseholdKind.family => Icons.family_restroom,
+    HouseholdKind.couple => Icons.favorite_outline,
+    HouseholdKind.group => Icons.groups_outlined,
+  };
+}
+
+class _HouseholdKindOption extends StatelessWidget {
+  const _HouseholdKindOption({
+    super.key,
+    required this.kind,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final HouseholdKind kind;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color:
+          selected ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          child: Row(
+            children: [
+              Icon(
+                _HouseholdSetupScreenState._kindIcon(kind),
+                size: 20,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  kind.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color:
+                        selected ? scheme.onPrimaryContainer : scheme.onSurface,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.check_circle, size: 18, color: scheme.primary),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

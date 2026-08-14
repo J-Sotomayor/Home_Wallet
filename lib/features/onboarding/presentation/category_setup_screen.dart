@@ -117,7 +117,28 @@ class _CategorySetupScreenState extends State<CategorySetupScreen> {
                       final selected = _selected.contains(category);
                       return FilterChip(
                         selected: selected,
-                        avatar: Icon(_categoryIcon(category), size: 18),
+                        showCheckmark: false,
+                        selectedColor:
+                            Theme.of(context).colorScheme.primaryContainer,
+                        side: BorderSide(
+                          color:
+                              selected
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context).colorScheme.outline,
+                          width: selected ? 1.5 : 1,
+                        ),
+                        avatar: Icon(
+                          selected
+                              ? Icons.check_circle_outline
+                              : _categoryIcon(category),
+                          size: 18,
+                          color:
+                              selected
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                        ),
                         label: Text(category),
                         onSelected:
                             _busy
