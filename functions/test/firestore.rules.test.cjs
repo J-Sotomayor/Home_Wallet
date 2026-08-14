@@ -233,3 +233,18 @@ test("the active space can only be changed to an active membership", async () =>
     }),
   );
 });
+
+test("key recovery backups cannot be read or written directly", async () => {
+  await seedSpace({
+    householdId: "protected-space",
+    kind: "group",
+    members: [{uid: "owner", role: "owner"}],
+  });
+  const backup = doc(
+    userDb("owner"),
+    "internalHouseholdKeyBackups",
+    "protected-space",
+  );
+  await assertFails(getDoc(backup));
+  await assertFails(setDoc(backup, cipher));
+});

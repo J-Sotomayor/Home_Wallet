@@ -3637,7 +3637,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 20),
               Text(
-                'HomeWallet 1.0.5 · Firebase Blaze',
+                'HomeWallet 1.0.6 · Firebase Blaze',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),

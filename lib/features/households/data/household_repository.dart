@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -46,7 +49,7 @@ abstract interface class HouseholdRepository {
     required String uid,
     required String displayName,
   });
-  Future<bool> hasKey(String householdId);
+  Future<bool> ensureKeyAvailable(String householdId);
 }
 
 class FirebaseHouseholdRepository implements HouseholdRepository {
@@ -301,6 +304,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
         {'privatePayload': memberPayload},
       );
       await batch.commit();
+      await _tryBackupHouseholdKey(householdId, key);
       await setActiveHousehold(user.uid, householdId);
       return householdId;
     } catch (error) {
@@ -428,6 +432,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
           .collection('members')
           .doc(user.uid)
           .set({'privatePayload': memberPayload}, SetOptions(merge: true));
+      await _tryBackupHouseholdKey(householdId, payload.keyBytes);
       await setActiveHousehold(user.uid, householdId);
       return householdId;
     } catch (error) {
@@ -524,8 +529,44 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
   }
 
   @override
-  Future<bool> hasKey(String householdId) async =>
-      await _keyStore.readHouseholdKey(householdId) != null;
+  Future<bool> ensureKeyAvailable(String householdId) async {
+    final localKey = await _keyStore.readHouseholdKey(householdId);
+    if (localKey != null) {
+      // No retrasamos la entrada: el respaldo se renueva en segundo plano.
+      unawaited(_tryBackupHouseholdKey(householdId, localKey));
+      return true;
+    }
+    try {
+      await _refreshVerifiedSession();
+      final result = await _functions.httpsCallable('recoverHouseholdKey').call(
+        {'householdId': householdId},
+      );
+      final encoded = _asMap(result.data)['key'];
+      if (encoded is! String) return false;
+      final key = base64Url.decode(
+        encoded.padRight((encoded.length + 3) ~/ 4 * 4, '='),
+      );
+      if (key.length != 32) return false;
+      await _keyStore.writeHouseholdKey(householdId, key);
+      return true;
+    } on Object {
+      // Si todavía no existe respaldo o no hay conexión, la interfaz conserva
+      // el QR como recuperación manual y permite reintentar.
+      return false;
+    }
+  }
+
+  Future<void> _tryBackupHouseholdKey(String householdId, List<int> key) async {
+    try {
+      await _functions.httpsCallable('backupHouseholdKey').call({
+        'householdId': householdId,
+        'key': base64UrlEncode(key).replaceAll('=', ''),
+      });
+    } on Object {
+      // El respaldo mejora la recuperación, pero una caída temporal de la
+      // Function no debe bloquear el acceso con una clave local válida.
+    }
+  }
 
   Future<bool> _hasActiveMembership(String householdId, String uid) async {
     try {

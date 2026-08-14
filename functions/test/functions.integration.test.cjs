@@ -1,5 +1,6 @@
 const {after, test} = require("node:test");
 const assert = require("node:assert/strict");
+const {createCipheriv, randomBytes} = require("node:crypto");
 const {
   deleteApp: deleteClientApp,
   initializeApp: initializeClientApp,
@@ -99,6 +100,24 @@ async function createSpace(user, kind) {
   await clearRateLimit(user.uid, "createHousehold");
   const result = await callAs(user, "createHousehold", {kind});
   return result.data.householdId;
+}
+
+function encryptedHouseholdPayload(householdId, key) {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, nonce);
+  cipher.setAAD(Buffer.from(`households/${householdId}`, "utf8"));
+  const clear = Buffer.from(
+    JSON.stringify({name: "Espacio recuperable", kind: "group"}),
+    "utf8",
+  );
+  const cipherText = Buffer.concat([cipher.update(clear), cipher.final()]);
+  return {
+    v: 1,
+    alg: "A256GCM",
+    ct: cipherText.toString("base64url"),
+    iv: nonce.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+  };
 }
 
 after(async () => {
@@ -238,5 +257,46 @@ test("joining a shared space preserves all previous memberships", async () => {
   assert.deepEqual(
     new Set(profile.householdIds),
     new Set([guestIndividualId, groupId]),
+  );
+});
+
+test("an active member can recover a server-wrapped household key", async () => {
+  const owner = await verifiedUser("recovery-owner");
+  const member = await verifiedUser("recovery-member");
+  const outsider = await verifiedUser("recovery-outsider");
+  const householdId = await createSpace(owner, "group");
+  const key = randomBytes(32);
+  const encodedKey = key.toString("base64url");
+
+  await db.collection("households").doc(householdId).update({
+    privatePayload: encryptedHouseholdPayload(householdId, key),
+  });
+  await callAs(owner, "backupHouseholdKey", {
+    householdId,
+    key: encodedKey,
+  });
+
+  const storedBackup = (
+    await db.collection("internalHouseholdKeyBackups").doc(householdId).get()
+  ).data();
+  assert.equal(storedBackup.key, undefined);
+  assert.notEqual(storedBackup.ct, encodedKey);
+
+  const invitation = await callAs(owner, "createInvitation", {
+    householdId,
+    role: "member",
+  });
+  await callAs(member, "acceptInvitation", {
+    invitationId: invitation.data.invitationId,
+    token: invitation.data.token,
+  });
+  const recovered = await callAs(member, "recoverHouseholdKey", {
+    householdId,
+  });
+  assert.equal(recovered.data.key, encodedKey);
+
+  await assert.rejects(
+    () => callAs(outsider, "recoverHouseholdKey", {householdId}),
+    (error) => error.code === "functions/permission-denied",
   );
 });

@@ -1,4 +1,9 @@
-import {createHash, randomBytes} from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 
 import {initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
@@ -13,6 +18,7 @@ import {
 import {getStorage} from "firebase-admin/storage";
 import {setGlobalOptions} from "firebase-functions/v2";
 import {error as logError} from "firebase-functions/logger";
+import {defineSecret} from "firebase-functions/params";
 import {
   CallableRequest,
   HttpsError,
@@ -35,6 +41,7 @@ setGlobalOptions({
 const db = getFirestore();
 const invitationLifetimeMs = 15 * 60 * 1000;
 const termsVersion = "2026-08-02";
+const householdKeyBackupSecret = defineSecret("HOUSEHOLD_KEY_BACKUP_SECRET");
 
 function requireVerifiedUser(request: CallableRequest<unknown>): string {
   const auth = request.auth;
@@ -96,6 +103,109 @@ function requiredCipherPayload(
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("base64url");
+}
+
+function requiredHouseholdKey(data: Record<string, unknown>): Buffer {
+  const encoded = requiredString(data, "key", 64);
+  try {
+    const key = Buffer.from(encoded, "base64url");
+    if (key.length === 32) return key;
+  } catch (_) {
+    // El error público se normaliza debajo.
+  }
+  throw new HttpsError("invalid-argument", "La clave del espacio no es válida.");
+}
+
+function keyBackupMasterKey(): Buffer {
+  try {
+    const key = Buffer.from(householdKeyBackupSecret.value(), "base64url");
+    if (key.length === 32) return key;
+  } catch (_) {
+    // No exponemos detalles del secreto configurado.
+  }
+  throw new HttpsError(
+    "internal",
+    "La recuperación segura no está disponible temporalmente.",
+  );
+}
+
+function decodePayloadPart(value: unknown): Buffer {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("Invalid encrypted payload");
+  }
+  return Buffer.from(value, "base64url");
+}
+
+function verifyHouseholdKey(
+  householdId: string,
+  key: Buffer,
+  rawPayload: unknown,
+): void {
+  const payload = requiredCipherPayload({payload: rawPayload}, "payload");
+  try {
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      key,
+      decodePayloadPart(payload.iv),
+    );
+    decipher.setAAD(Buffer.from(`households/${householdId}`, "utf8"));
+    decipher.setAuthTag(decodePayloadPart(payload.tag));
+    const clear = Buffer.concat([
+      decipher.update(decodePayloadPart(payload.ct)),
+      decipher.final(),
+    ]);
+    const decoded = JSON.parse(clear.toString("utf8"));
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+      throw new Error("Invalid decrypted household");
+    }
+  } catch (_) {
+    throw new HttpsError(
+      "failed-precondition",
+      "La clave no corresponde a este espacio.",
+    );
+  }
+}
+
+function wrapHouseholdKey(householdId: string, key: Buffer) {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keyBackupMasterKey(), nonce);
+  cipher.setAAD(Buffer.from(`household-key-backup/v1/${householdId}`, "utf8"));
+  const cipherText = Buffer.concat([cipher.update(key), cipher.final()]);
+  return {
+    v: 1,
+    alg: "A256GCM",
+    ct: cipherText.toString("base64url"),
+    iv: nonce.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+  };
+}
+
+function unwrapHouseholdKey(
+  householdId: string,
+  rawBackup: Record<string, unknown>,
+): Buffer {
+  if (rawBackup.v !== 1 || rawBackup.alg !== "A256GCM") {
+    throw new HttpsError("data-loss", "La copia de recuperación no es válida.");
+  }
+  try {
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      keyBackupMasterKey(),
+      decodePayloadPart(rawBackup.iv),
+    );
+    decipher.setAAD(
+      Buffer.from(`household-key-backup/v1/${householdId}`, "utf8"),
+    );
+    decipher.setAuthTag(decodePayloadPart(rawBackup.tag));
+    const key = Buffer.concat([
+      decipher.update(decodePayloadPart(rawBackup.ct)),
+      decipher.final(),
+    ]);
+    if (key.length !== 32) throw new Error("Invalid recovered key");
+    return key;
+  } catch (_) {
+    throw new HttpsError("data-loss", "No se pudo recuperar la clave cifrada.");
+  }
 }
 
 async function enforceRateLimit(
@@ -284,6 +394,80 @@ export const createHousehold = onCall(async (request) => {
 
   return {householdId: householdReference.id};
 });
+
+export const backupHouseholdKey = onCall(
+  {secrets: [householdKeyBackupSecret]},
+  async (request) => {
+    const uid = requireVerifiedUser(request);
+    const data = requestMap(request);
+    const householdId = requiredString(data, "householdId", 128);
+    const key = requiredHouseholdKey(data);
+    await enforceRateLimit(uid, "backupHouseholdKey", 1_000);
+
+    const householdReference = db.collection("households").doc(householdId);
+    const memberReference = householdReference.collection("members").doc(uid);
+    const backupReference = db
+      .collection("internalHouseholdKeyBackups")
+      .doc(householdId);
+    await db.runTransaction(async (transaction) => {
+      const [household, member] = await Promise.all([
+        transaction.get(householdReference),
+        transaction.get(memberReference),
+      ]);
+      if (!household.exists) {
+        throw new HttpsError("not-found", "El espacio ya no existe.");
+      }
+      if (!member.exists || member.data()?.status !== "active") {
+        throw new HttpsError(
+          "permission-denied",
+          "Ya no perteneces a este espacio.",
+        );
+      }
+      verifyHouseholdKey(householdId, key, household.data()?.privatePayload);
+      transaction.set(backupReference, {
+        ...wrapHouseholdKey(householdId, key),
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: uid,
+      });
+    });
+    return {ok: true};
+  },
+);
+
+export const recoverHouseholdKey = onCall(
+  {secrets: [householdKeyBackupSecret]},
+  async (request) => {
+    const uid = requireVerifiedUser(request);
+    const data = requestMap(request);
+    const householdId = requiredString(data, "householdId", 128);
+    await enforceRateLimit(uid, "recoverHouseholdKey", 2_000);
+
+    const householdReference = db.collection("households").doc(householdId);
+    const [household, member, backup] = await Promise.all([
+      householdReference.get(),
+      householdReference.collection("members").doc(uid).get(),
+      db.collection("internalHouseholdKeyBackups").doc(householdId).get(),
+    ]);
+    if (!household.exists) {
+      throw new HttpsError("not-found", "El espacio ya no existe.");
+    }
+    if (!member.exists || member.data()?.status !== "active") {
+      throw new HttpsError(
+        "permission-denied",
+        "Ya no perteneces a este espacio.",
+      );
+    }
+    if (!backup.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Este espacio aún no tiene una copia de recuperación.",
+      );
+    }
+    const key = unwrapHouseholdKey(householdId, backup.data()!);
+    verifyHouseholdKey(householdId, key, household.data()?.privatePayload);
+    return {key: key.toString("base64url")};
+  },
+);
 
 export const createInvitation = onCall(async (request) => {
   const uid = requireVerifiedUser(request);
@@ -876,6 +1060,11 @@ async function deleteAccountData(uid: string): Promise<void> {
     if (memberRole === "owner" && others.length === 0) {
       await db.recursiveDelete(householdReference);
       await db.collection("invitations").doc(householdId).delete().catch(() => undefined);
+      await db
+        .collection("internalHouseholdKeyBackups")
+        .doc(householdId)
+        .delete()
+        .catch(() => undefined);
       continue;
     }
     const batch = db.batch();

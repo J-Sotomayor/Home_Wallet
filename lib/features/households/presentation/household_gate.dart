@@ -115,31 +115,33 @@ class _HouseholdKeyGate extends StatefulWidget {
 }
 
 class _HouseholdKeyGateState extends State<_HouseholdKeyGate> {
-  late Future<bool> _hasKey = widget.services.households.hasKey(
-    widget.householdId,
-  );
+  late Future<bool> _keyAvailable = widget.services.households
+      .ensureKeyAvailable(widget.householdId);
+
+  void _retryRecovery() {
+    setState(() {
+      _keyAvailable = widget.services.households.ensureKeyAvailable(
+        widget.householdId,
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<bool>(
-      future: _hasKey,
+      future: _keyAvailable,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (!snapshot.data!) {
+        if (snapshot.data != true) {
           return _MissingKeyScreen(
             user: widget.user,
             services: widget.services,
-            onRecovered:
-                () => setState(
-                  () =>
-                      _hasKey = widget.services.households.hasKey(
-                        widget.householdId,
-                      ),
-                ),
+            onRetry: _retryRecovery,
+            onRecovered: _retryRecovery,
           );
         }
         return HomeShell(
@@ -157,11 +159,13 @@ class _MissingKeyScreen extends StatelessWidget {
   const _MissingKeyScreen({
     required this.user,
     required this.services,
+    required this.onRetry,
     required this.onRecovered,
   });
 
   final AuthUser user;
   final AppServices services;
+  final VoidCallback onRetry;
   final VoidCallback onRecovered;
 
   @override
@@ -184,17 +188,29 @@ class _MissingKeyScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 18),
                   Text(
-                    'Falta la clave de este espacio',
+                    'No pudimos recuperar la clave automáticamente',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'Esto puede ocurrir después de reinstalar la app o cambiar de teléfono. Pide a otro integrante un QR nuevo para recuperar el acceso cifrado.',
+                    'Comprueba tu conexión y vuelve a intentarlo. Si este espacio se creó antes de habilitar la recuperación segura, necesitarás un QR una última vez.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
                   FilledButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Reintentar recuperación'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor:
+                          Theme.of(context).colorScheme.secondaryContainer,
+                      foregroundColor:
+                          Theme.of(context).colorScheme.onSecondaryContainer,
+                    ),
                     onPressed: () async {
                       final result = await Navigator.of(context).push<String>(
                         MaterialPageRoute(

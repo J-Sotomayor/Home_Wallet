@@ -12,7 +12,7 @@
   <img alt="Flutter 3.29.2" src="https://img.shields.io/badge/Flutter-3.29.2-02569B?logo=flutter&logoColor=white">
   <img alt="Dart 3.7.2" src="https://img.shields.io/badge/Dart-3.7.2-0175C2?logo=dart&logoColor=white">
   <img alt="Firebase" src="https://img.shields.io/badge/Firebase-Backend-FFCA28?logo=firebase&logoColor=black">
-  <img alt="Versión 1.0.5" src="https://img.shields.io/badge/versi%C3%B3n-1.0.5-blue">
+  <img alt="Versión 1.0.6" src="https://img.shields.io/badge/versi%C3%B3n-1.0.6-blue">
 </p>
 
 ## Descripción
@@ -38,7 +38,8 @@ HomeWallet es una aplicación Android desarrollada con Flutter para administrar 
 ## Seguridad y privacidad
 
 - Cifrado AES-256-GCM en el dispositivo para la información financiera compartida.
-- Claves por espacio almacenadas con Android Keystore.
+- Claves por espacio almacenadas localmente con el almacén seguro de Android.
+- Recuperación automática tras reinstalar o cambiar de teléfono: una Cloud Function verifica la sesión y la membresía activa antes de devolver la clave. La copia se cifra con AES-256-GCM mediante un secreto de Google Secret Manager y nunca admite lectura directa desde Firestore.
 - Reglas de Firestore basadas en membresía, rol y correo verificado.
 - Invitaciones protegidas con tokens aleatorios de 256 bits, hash SHA-256, expiración y límites de uso.
 - Firebase App Check preparado para Play Integrity en distribuciones por Google Play.
@@ -125,7 +126,13 @@ El código está configurado para el proyecto de producción de HomeWallet. Para
    ```
 
 4. Registra las huellas SHA-1 y SHA-256 necesarias para Google Sign-In y App Check en Android.
-5. Revisa las reglas y despliega el backend:
+5. Configura un secreto aleatorio de 32 bytes para proteger las copias de recuperación:
+
+   ```bash
+   firebase functions:secrets:set HOUSEHOLD_KEY_BACKUP_SECRET
+   ```
+
+6. Revisa las reglas y despliega el backend:
 
    ```bash
    npm --prefix functions run build
@@ -207,7 +214,7 @@ homewallet/
 
 ## Estado del proyecto
 
-La versión actual es `1.0.5+6`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37) y APK release firmado para pruebas físicas por instalación directa. iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere pruebas en los dispositivos Android declarados y la activación controlada de App Check después de publicar por Google Play o adoptar un proveedor compatible con todos los dispositivos admitidos.
+La versión actual es `1.0.6+7`. Esta entrega es exclusivamente Android: `minSdk 23` (Android 6.0), `targetSdk 36`, con validación actual en el emulador Android 17 (API 37) y APK release firmado para pruebas físicas por instalación directa. iOS no forma parte del alcance ni de los criterios de aceptación de esta entrega. La publicación requiere pruebas en los dispositivos Android declarados y la activación controlada de App Check después de publicar por Google Play o adoptar un proveedor compatible con todos los dispositivos admitidos.
 
 ## Licencia
 

@@ -49,7 +49,7 @@ class LegalScreen extends StatelessWidget {
               paragraphs: [
                 'HomeWallet trata datos de cuenta y contacto, pertenencia y rol en el espacio, información financiera que registras, identificadores técnicos del dispositivo, preferencias, foto opcional y diagnósticos de fallos necesarios para operar y proteger el servicio.',
                 'Las finalidades son autenticarte, sincronizar tu espacio, calcular saldos y planes, importar o exportar datos cuando lo solicitas, enviar avisos que habilitas, prevenir abuso, resolver fallos y atender la eliminación de la cuenta.',
-                'Los detalles financieros se cifran en el dispositivo antes de guardarse. Las claves del espacio permanecen en los dispositivos autorizados y se comparten mediante una invitación QR temporal.',
+                'Los detalles financieros se cifran en el dispositivo antes de guardarse. La clave del espacio se conserva localmente en el almacén seguro del dispositivo y también en una copia de recuperación cifrada administrada por el servidor. Solo una sesión verificada con membresía activa puede solicitar su recuperación; el QR permanece como alternativa manual.',
                 'Firebase procesa datos necesarios para autenticación, sincronización, funciones del servidor, notificaciones, almacenamiento de la foto y diagnóstico de errores. Su infraestructura puede implicar tratamiento fuera de Ecuador conforme a la configuración y garantías contractuales del proveedor.',
                 'HomeWallet no solicita ni almacena tus credenciales bancarias para importar archivos.',
                 'Los estados de cuenta se leen en el dispositivo. Solo los movimientos que confirmas se cifran y sincronizan con tu espacio.',
