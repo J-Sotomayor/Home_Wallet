@@ -205,6 +205,54 @@ service cloud.firestore {
           (resource.data.createdBy == request.auth.uid || isManager(householdId));
       }
 
+      // Reimbursements are immutable financial evidence. A debtor can report
+      // only their own payment; the original payer (or a manager) resolves it.
+      match /sharedExpensePayments/{paymentId} {
+        allow read: if isMember(householdId);
+        allow create: if canContribute(householdId) &&
+          isCollaborative(householdId) &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'expenseId', 'participantUid', 'payerUid',
+            'status', 'createdBy', 'createdAt', 'updatedAt', 'resolvedBy',
+            'payload'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.expenseId is string &&
+          request.resource.data.participantUid == request.auth.uid &&
+          request.resource.data.payerUid is string &&
+          request.resource.data.payerUid != request.auth.uid &&
+          request.resource.data.status == 'reported' &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.createdAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.resolvedBy == null &&
+          validCipher(request.resource.data.payload);
+        allow update: if canContribute(householdId) &&
+          isCollaborative(householdId) &&
+          resource.data.status == 'reported' &&
+          request.resource.data.keys().hasOnly([
+            'schemaVersion', 'expenseId', 'participantUid', 'payerUid',
+            'status', 'createdBy', 'createdAt', 'updatedAt', 'resolvedBy',
+            'payload'
+          ]) &&
+          request.resource.data.schemaVersion == resource.data.schemaVersion &&
+          request.resource.data.expenseId == resource.data.expenseId &&
+          request.resource.data.participantUid == resource.data.participantUid &&
+          request.resource.data.payerUid == resource.data.payerUid &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.payload == resource.data.payload &&
+          request.resource.data.updatedAt is timestamp &&
+          request.resource.data.resolvedBy == request.auth.uid &&
+          (
+            (request.resource.data.status in ['confirmed', 'rejected'] &&
+              (resource.data.payerUid == request.auth.uid || isManager(householdId))) ||
+            (request.resource.data.status == 'cancelled' &&
+              resource.data.participantUid == request.auth.uid)
+          );
+        allow delete: if false;
+      }
+
       match /plans/{planId} {
         allow read: if isMember(householdId);
         allow create: if canContribute(householdId) &&

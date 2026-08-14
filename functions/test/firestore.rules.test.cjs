@@ -101,6 +101,21 @@ function sharedExpenseDocument(uid) {
   };
 }
 
+function sharedPaymentDocument(participantUid, payerUid) {
+  return {
+    schemaVersion: 1,
+    expenseId: "dinner",
+    participantUid,
+    payerUid,
+    status: "reported",
+    createdBy: participantUid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    resolvedBy: null,
+    payload: cipher,
+  };
+}
+
 before(async () => {
   environment = await initializeTestEnvironment({
     projectId,
@@ -279,6 +294,56 @@ test("members update only their own encrypted profile and contributors set incom
     updateDoc(
       doc(userDb("junior"), "households", "income-space", "members", "junior"),
       {incomePayload: {...cipher, ct: "junior-income-update"}},
+    ),
+  );
+});
+
+test("only the debtor reports a reimbursement and the payer resolves it", async () => {
+  await seedSpace({
+    householdId: "couple",
+    kind: "couple",
+    members: [
+      {uid: "owner", role: "owner"},
+      {uid: "partner", role: "member"},
+      {uid: "observer", role: "member"},
+    ],
+  });
+  const paymentPath = [
+    "households",
+    "couple",
+    "sharedExpensePayments",
+    "payment-1",
+  ];
+  await assertSucceeds(
+    setDoc(
+      doc(userDb("partner"), ...paymentPath),
+      sharedPaymentDocument("partner", "owner"),
+    ),
+  );
+  await assertFails(
+    updateDoc(doc(userDb("observer"), ...paymentPath), {
+      status: "confirmed",
+      resolvedBy: "observer",
+      updatedAt: serverTimestamp(),
+    }),
+  );
+  await assertSucceeds(
+    updateDoc(doc(userDb("owner"), ...paymentPath), {
+      status: "confirmed",
+      resolvedBy: "owner",
+      updatedAt: serverTimestamp(),
+    }),
+  );
+  await assertFails(
+    setDoc(
+      doc(
+        userDb("partner"),
+        "households",
+        "couple",
+        "sharedExpensePayments",
+        "payment-2",
+      ),
+      sharedPaymentDocument("observer", "owner"),
     ),
   );
 });

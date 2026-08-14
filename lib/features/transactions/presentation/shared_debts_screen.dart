@@ -16,6 +16,7 @@ class SharedDebtsScreen extends StatefulWidget {
     required this.repository,
     required this.households,
     required this.canContribute,
+    required this.canManage,
   });
 
   final String householdId;
@@ -23,6 +24,7 @@ class SharedDebtsScreen extends StatefulWidget {
   final FinanceRepository repository;
   final HouseholdRepository households;
   final bool canContribute;
+  final bool canManage;
 
   @override
   State<SharedDebtsScreen> createState() => _SharedDebtsScreenState();
@@ -48,101 +50,31 @@ class _SharedDebtsScreenState extends State<SharedDebtsScreen> {
           return StreamBuilder<List<SharedExpense>>(
             stream: widget.repository.watchSharedExpenses(widget.householdId),
             builder: (context, expenseSnapshot) {
-              if (memberSnapshot.hasError || expenseSnapshot.hasError) {
-                return const Center(
-                  child: Text('No se pudieron cargar los gastos divididos.'),
-                );
-              }
-              if (!memberSnapshot.hasData || !expenseSnapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final members = memberSnapshot.data!;
-              final names = {
-                for (final member in members) member.uid: member.displayName,
-              };
-              final expenses = expenseSnapshot.data!;
-              final pending = expenses.fold<int>(
-                0,
-                (sum, expense) => sum + expense.pendingMinor,
-              );
-              final pendingPeople =
-                  <String>{
-                    for (final expense in expenses)
-                      for (final participant
-                          in expense.participantSharesMinor.keys)
-                        if (participant != expense.paidByUid &&
-                            !expense.settledParticipantIds.contains(
-                              participant,
-                            ))
-                          participant,
-                  }.length;
-
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 110),
-                children: [
-                  Text(
-                    'Cuentas entre personas',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 5),
-                  const Text(
-                    'Aquí sólo calculas quién paga qué. No modifica tus ingresos, gastos, ahorros ni reportes.',
-                  ),
-                  const SizedBox(height: 16),
-                  Card(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.account_balance_wallet_outlined),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Pendiente por devolver',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                Text(
-                                  pendingPeople == 1
-                                      ? '1 persona tiene un pago pendiente'
-                                      : '$pendingPeople personas tienen pagos pendientes',
-                                ),
-                              ],
-                            ),
-                          ),
-                          Text(
-                            _money(pending),
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w900),
-                          ),
-                        ],
+              return StreamBuilder<List<SharedExpensePayment>>(
+                stream: widget.repository.watchSharedExpensePayments(
+                  widget.householdId,
+                ),
+                builder: (context, paymentSnapshot) {
+                  if (memberSnapshot.hasError ||
+                      expenseSnapshot.hasError ||
+                      paymentSnapshot.hasError) {
+                    return const Center(
+                      child: Text(
+                        'No se pudieron cargar los gastos divididos.',
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  if (expenses.isEmpty)
-                    _EmptySharedState(onAdd: _createExpense)
-                  else ...[
-                    Text(
-                      'Gastos divididos',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 6),
-                    ...expenses.map(
-                      (expense) => _SharedExpenseCard(
-                        expense: expense,
-                        names: names,
-                        canContribute: widget.canContribute,
-                        onSettle:
-                            (participantUid) =>
-                                _settle(expense, participantUid),
-                      ),
-                    ),
-                  ],
-                ],
+                    );
+                  }
+                  if (!memberSnapshot.hasData ||
+                      !expenseSnapshot.hasData ||
+                      !paymentSnapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  return _buildContent(
+                    memberSnapshot.data!,
+                    expenseSnapshot.data!,
+                    paymentSnapshot.data!,
+                  );
+                },
               );
             },
           );
@@ -151,9 +83,105 @@ class _SharedDebtsScreenState extends State<SharedDebtsScreen> {
     );
   }
 
+  Widget _buildContent(
+    List<HouseholdMember> members,
+    List<SharedExpense> expenses,
+    List<SharedExpensePayment> payments,
+  ) {
+    final names = {
+      for (final member in members) member.uid: member.displayName,
+    };
+    final owedToMe = expenses
+        .where((expense) => expense.paidByUid == widget.currentUid)
+        .fold<int>(
+          0,
+          (sum, expense) => sum + expense.pendingMinorWith(payments),
+        );
+    final iOwe = expenses
+        .where(
+          (expense) =>
+              expense.paidByUid != widget.currentUid &&
+              expense.participantSharesMinor.containsKey(widget.currentUid),
+        )
+        .fold<int>(
+          0,
+          (sum, expense) =>
+              sum + expense.remainingMinorFor(widget.currentUid, payments),
+        );
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 110),
+      children: [
+        Text(
+          'Cuentas entre personas',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 5),
+        const Text(
+          'Divide una cuenta sin duplicar movimientos ni cambiar tus saldos o reportes.',
+        ),
+        const SizedBox(height: 16),
+        Card(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                const Icon(Icons.account_balance_wallet_outlined),
+                const SizedBox(width: 14),
+                Expanded(child: _DebtTotal(label: 'Te deben', value: owedToMe)),
+                const SizedBox(width: 12),
+                Expanded(child: _DebtTotal(label: 'Debes', value: iOwe)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        const Row(
+          children: [
+            Icon(Icons.verified_outlined, size: 17),
+            SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                'Una devolución reduce la deuda cuando quien pagó la confirma.',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (expenses.isEmpty)
+          _EmptySharedState(onAdd: _createExpense)
+        else ...[
+          Text(
+            'Gastos divididos',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          ...expenses.map((expense) {
+            final expensePayments =
+                payments
+                    .where((payment) => payment.expenseId == expense.id)
+                    .toList();
+            return _SharedExpenseCard(
+              expense: expense,
+              payments: expensePayments,
+              names: names,
+              currentUid: widget.currentUid,
+              onTap:
+                  () => _openExpenseDetail(expense, expensePayments, members),
+            );
+          }),
+        ],
+      ],
+    );
+  }
+
   Future<void> _createExpense() async {
-    final members =
-        await widget.households.watchMembers(widget.householdId).first;
+    final values = await Future.wait([
+      widget.households.watchMembers(widget.householdId).first,
+      widget.repository.watchTransactions(widget.householdId).first,
+      widget.repository.watchSharedExpenses(widget.householdId).first,
+    ]);
+    final members = values[0] as List<HouseholdMember>;
     if (!mounted) return;
     if (members.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -163,12 +191,103 @@ class _SharedDebtsScreenState extends State<SharedDebtsScreen> {
       );
       return;
     }
+    final transactions = values[1] as List<FinanceTransaction>;
+    final existing = values[2] as List<SharedExpense>;
+    final linkedIds =
+        existing
+            .map((expense) => expense.sourceTransactionId)
+            .whereType<String>()
+            .toSet();
+    final eligible =
+        transactions
+            .where(
+              (transaction) =>
+                  transaction.type == TransactionType.expense &&
+                  transaction.countsInHouseholdFinances &&
+                  !linkedIds.contains(transaction.id),
+            )
+            .toList();
+    final choice = await showModalBottomSheet<_CreationChoice>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (context) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '¿De dónde sale la cuenta?',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Elige la opción que evita volver a escribir datos.',
+                  ),
+                  const SizedBox(height: 14),
+                  Card(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    child: ListTile(
+                      leading: const Icon(Icons.receipt_long_outlined),
+                      title: const Text(
+                        'Usar un gasto registrado',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      subtitle: Text(
+                        eligible.isEmpty
+                            ? 'No hay gastos disponibles sin dividir.'
+                            : 'Recomendado · completa monto, fecha y categoría.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      enabled: eligible.isNotEmpty,
+                      onTap:
+                          eligible.isEmpty
+                              ? null
+                              : () => Navigator.pop(
+                                context,
+                                const _CreationChoice.pickTransaction(),
+                              ),
+                    ),
+                  ),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.add_card_outlined),
+                      title: const Text('Crear cuenta independiente'),
+                      subtitle: const Text(
+                        'Sólo calcula la deuda; no crea un movimiento.',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap:
+                          () => Navigator.pop(
+                            context,
+                            const _CreationChoice.independent(),
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+    if (choice == null || !mounted) return;
+    FinanceTransaction? source;
+    if (choice.pickRegistered) {
+      source = await Navigator.of(context).push<FinanceTransaction>(
+        MaterialPageRoute(
+          builder: (_) => _TransactionPickerScreen(transactions: eligible),
+        ),
+      );
+      if (source == null || !mounted) return;
+    }
     final draft = await Navigator.of(context).push<SharedExpenseDraft>(
       MaterialPageRoute(
         builder:
             (_) => _SharedExpenseForm(
               members: members,
               currentUid: widget.currentUid,
+              sourceTransaction: source,
             ),
       ),
     );
@@ -193,54 +312,74 @@ class _SharedDebtsScreenState extends State<SharedDebtsScreen> {
     }
   }
 
-  Future<void> _settle(SharedExpense expense, String participantUid) async {
-    try {
-      await widget.repository.settleSharedParticipant(
-        householdId: widget.householdId,
-        expense: expense,
-        participantUid: participantUid,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pago marcado como devuelto.')),
-        );
-      }
-    } on AppException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+  Future<void> _openExpenseDetail(
+    SharedExpense expense,
+    List<SharedExpensePayment> payments,
+    List<HouseholdMember> members,
+  ) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder:
+            (_) => _SharedExpenseDetailScreen(
+              householdId: widget.householdId,
+              currentUid: widget.currentUid,
+              expense: expense,
+              initialPayments: payments,
+              members: members,
+              repository: widget.repository,
+              canContribute: widget.canContribute,
+              canManage: widget.canManage,
+            ),
+      ),
+    );
   }
 }
 
 class _SharedExpenseCard extends StatelessWidget {
   const _SharedExpenseCard({
     required this.expense,
+    required this.payments,
     required this.names,
-    required this.canContribute,
-    required this.onSettle,
+    required this.currentUid,
+    required this.onTap,
   });
 
   final SharedExpense expense;
+  final List<SharedExpensePayment> payments;
   final Map<String, String> names;
-  final bool canContribute;
-  final ValueChanged<String> onSettle;
+  final String currentUid;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final payer = names[expense.paidByUid] ?? 'Quien pagó';
-    final payerShare = expense.participantSharesMinor[expense.paidByUid] ?? 0;
-    final advanced = expense.totalMinor - payerShare;
+    final pending = expense.pendingMinorWith(payments);
+    final reported = payments.any(
+      (payment) => payment.status == SharedExpensePaymentStatus.reported,
+    );
+    final currentRemaining = expense.remainingMinorFor(currentUid, payments);
+    final status =
+        pending == 0
+            ? 'Saldado'
+            : reported
+            ? 'Pago por confirmar'
+            : currentUid == expense.paidByUid
+            ? 'Te deben ${_money(pending)}'
+            : currentRemaining > 0
+            ? 'Debes ${_money(currentRemaining)} a $payer'
+            : '${_money(pending)} pendiente';
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
       clipBehavior: Clip.antiAlias,
-      child: ExpansionTile(
+      child: ListTile(
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         leading: CircleAvatar(
           child: Icon(
-            expense.pendingMinor == 0
+            pending == 0
                 ? Icons.check_outlined
+                : reported
+                ? Icons.hourglass_top_outlined
                 : Icons.groups_outlined,
           ),
         ),
@@ -249,98 +388,47 @@ class _SharedExpenseCard extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w800),
         ),
         subtitle: Text(
-          '${expense.category} · ${DateFormat('dd/MM/yyyy').format(expense.occurredAt)}\n$payer pagó ${_money(expense.totalMinor)}',
+          '${expense.category} · ${DateFormat('dd/MM/yyyy').format(expense.occurredAt)}\n$status',
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
         ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.end,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               _money(expense.totalMinor),
               style: const TextStyle(fontWeight: FontWeight.w900),
             ),
-            Text(
-              expense.pendingMinor == 0
-                  ? 'Saldado'
-                  : '${_money(expense.pendingMinor)} pendiente',
-              style: TextStyle(
-                fontSize: 11,
-                color:
-                    expense.pendingMinor == 0
-                        ? Colors.green
-                        : Theme.of(context).colorScheme.error,
-              ),
-            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right),
           ],
         ),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-        children: [
-          const Divider(),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '$payer adelantó ${_money(advanced)} y su parte es ${_money(payerShare)}.',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...expense.participantSharesMinor.entries.map((entry) {
-            final isPayer = entry.key == expense.paidByUid;
-            final settled =
-                isPayer || expense.settledParticipantIds.contains(entry.key);
-            return ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(
-                settled ? Icons.check_circle : Icons.schedule_outlined,
-                color:
-                    settled
-                        ? Colors.green
-                        : Theme.of(context).colorScheme.primary,
-              ),
-              title: Text(names[entry.key] ?? 'Integrante'),
-              subtitle: Text(
-                isPayer
-                    ? 'Pagó la cuenta · esta es su parte'
-                    : settled
-                    ? 'Ya devolvió su parte a $payer'
-                    : 'Debe devolverle a $payer',
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _money(entry.value),
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  if (!settled) ...[
-                    const SizedBox(width: 8),
-                    IconButton.filledTonal(
-                      tooltip: 'Marcar como devuelto',
-                      onPressed:
-                          canContribute ? () => onSettle(entry.key) : null,
-                      icon: const Icon(Icons.done),
-                    ),
-                  ],
-                ],
-              ),
-            );
-          }),
-          if (expense.includesVat || expense.includesService)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                [
-                  if (expense.includesVat) 'IVA 15%',
-                  if (expense.includesService) 'servicio 10%',
-                ].join(' · '),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-        ],
       ),
     );
   }
+}
+
+class _DebtTotal extends StatelessWidget {
+  const _DebtTotal({required this.label, required this.value});
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      Text(
+        _money(value),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+      ),
+    ],
+  );
 }
 
 class _EmptySharedState extends StatelessWidget {
@@ -383,11 +471,518 @@ class _EmptySharedState extends StatelessWidget {
   }
 }
 
+class _CreationChoice {
+  const _CreationChoice.pickTransaction() : pickRegistered = true;
+  const _CreationChoice.independent() : pickRegistered = false;
+
+  final bool pickRegistered;
+}
+
+class _TransactionPickerScreen extends StatefulWidget {
+  const _TransactionPickerScreen({required this.transactions});
+
+  final List<FinanceTransaction> transactions;
+
+  @override
+  State<_TransactionPickerScreen> createState() =>
+      _TransactionPickerScreenState();
+}
+
+class _TransactionPickerScreenState extends State<_TransactionPickerScreen> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = _query.trim().toLowerCase();
+    final visible =
+        widget.transactions
+            .where(
+              (item) =>
+                  normalized.isEmpty ||
+                  item.description.toLowerCase().contains(normalized) ||
+                  item.category.toLowerCase().contains(normalized),
+            )
+            .toList();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Elegir gasto registrado')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'Buscar por descripción o categoría',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (value) => setState(() => _query = value),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+            child: Text(
+              'Sólo aparecen gastos que todavía no tienen una división.',
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: visible.length,
+              itemBuilder: (context, index) {
+                final item = visible[index];
+                return Card(
+                  child: ListTile(
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.receipt_long_outlined),
+                    ),
+                    title: Text(item.description),
+                    subtitle: Text(
+                      '${item.category} · ${DateFormat('dd/MM/yyyy').format(item.occurredAt)}',
+                    ),
+                    trailing: Text(
+                      _money(item.amountMinor),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    onTap: () => Navigator.pop(context, item),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SharedExpenseDetailScreen extends StatefulWidget {
+  const _SharedExpenseDetailScreen({
+    required this.householdId,
+    required this.currentUid,
+    required this.expense,
+    required this.initialPayments,
+    required this.members,
+    required this.repository,
+    required this.canContribute,
+    required this.canManage,
+  });
+
+  final String householdId;
+  final String currentUid;
+  final SharedExpense expense;
+  final List<SharedExpensePayment> initialPayments;
+  final List<HouseholdMember> members;
+  final FinanceRepository repository;
+  final bool canContribute;
+  final bool canManage;
+
+  @override
+  State<_SharedExpenseDetailScreen> createState() =>
+      _SharedExpenseDetailScreenState();
+}
+
+class _SharedExpenseDetailScreenState
+    extends State<_SharedExpenseDetailScreen> {
+  bool _busy = false;
+
+  Map<String, String> get _names => {
+    for (final member in widget.members) member.uid: member.displayName,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<SharedExpensePayment>>(
+      stream: widget.repository.watchSharedExpensePayments(widget.householdId),
+      initialData: widget.initialPayments,
+      builder: (context, snapshot) {
+        final payments =
+            (snapshot.data ?? const <SharedExpensePayment>[])
+                .where((payment) => payment.expenseId == widget.expense.id)
+                .toList();
+        final payer = _names[widget.expense.paidByUid] ?? 'Quien pagó';
+        final pending = widget.expense.pendingMinorWith(payments);
+        final canDelete =
+            widget.canContribute &&
+            (widget.canManage || widget.expense.createdBy == widget.currentUid);
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Detalle de la división'),
+            actions: [
+              if (canDelete)
+                IconButton(
+                  tooltip: 'Eliminar división',
+                  onPressed: _busy ? null : () => _deleteExpense(payments),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+            ],
+          ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+            children: [
+              Text(
+                widget.expense.description,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${widget.expense.category} · ${DateFormat('dd/MM/yyyy').format(widget.expense.occurredAt)}',
+              ),
+              if (widget.expense.sourceTransactionId != null) ...[
+                const SizedBox(height: 8),
+                const Chip(
+                  avatar: Icon(Icons.link, size: 18),
+                  label: Text('Vinculado a un gasto registrado'),
+                ),
+              ],
+              const SizedBox(height: 14),
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('$payer pagó la cuenta'),
+                      const SizedBox(height: 3),
+                      Text(
+                        _money(widget.expense.totalMinor),
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w900),
+                      ),
+                      const Divider(),
+                      Text(
+                        pending == 0
+                            ? 'Todo está saldado'
+                            : 'Falta devolver ${_money(pending)}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Quién debe a quién',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              ...widget.expense.participantSharesMinor.entries.map((entry) {
+                final isPayer = entry.key == widget.expense.paidByUid;
+                final confirmed = widget.expense.confirmedPaidMinorFor(
+                  entry.key,
+                  payments,
+                );
+                final reported = widget.expense.reportedPaidMinorFor(
+                  entry.key,
+                  payments,
+                );
+                final remaining = widget.expense.remainingMinorFor(
+                  entry.key,
+                  payments,
+                );
+                return Card(
+                  child: ListTile(
+                    leading: Icon(
+                      isPayer || remaining == 0
+                          ? Icons.check_circle
+                          : reported > 0
+                          ? Icons.hourglass_top
+                          : Icons.schedule,
+                      color:
+                          isPayer || remaining == 0
+                              ? Colors.green
+                              : Theme.of(context).colorScheme.primary,
+                    ),
+                    title: Text(
+                      entry.key == widget.currentUid
+                          ? 'Tú · ${_names[entry.key] ?? 'Integrante'}'
+                          : _names[entry.key] ?? 'Integrante',
+                    ),
+                    subtitle: Text(
+                      isPayer
+                          ? 'Pagó la cuenta · su parte es ${_money(entry.value)}'
+                          : remaining == 0
+                          ? 'Devolución completada a $payer'
+                          : reported > 0
+                          ? '${_money(reported)} esperando confirmación'
+                          : confirmed > 0
+                          ? 'Pagó ${_money(confirmed)} · falta ${_money(remaining)}'
+                          : 'Debe devolver ${_money(remaining)} a $payer',
+                    ),
+                  ),
+                );
+              }),
+              if (_canReportPayment(payments)) ...[
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: _busy ? null : () => _reportPayment(payments),
+                  icon: const Icon(Icons.payments_outlined),
+                  label: const Text('Informar una devolución'),
+                ),
+                const SizedBox(height: 5),
+                const Text(
+                  'Quien pagó recibirá una notificación y deberá confirmarla.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              if (payments.isNotEmpty) ...[
+                const SizedBox(height: 22),
+                Text(
+                  'Historial de devoluciones',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                ...payments.map((payment) => _paymentTile(payment)),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  bool _canReportPayment(List<SharedExpensePayment> payments) {
+    if (!widget.canContribute ||
+        widget.currentUid == widget.expense.paidByUid ||
+        !widget.expense.participantSharesMinor.containsKey(widget.currentUid)) {
+      return false;
+    }
+    final available =
+        widget.expense.remainingMinorFor(widget.currentUid, payments) -
+        widget.expense.reportedPaidMinorFor(widget.currentUid, payments);
+    return available > 0;
+  }
+
+  Widget _paymentTile(SharedExpensePayment payment) {
+    final canResolve =
+        payment.status == SharedExpensePaymentStatus.reported &&
+        (widget.currentUid == payment.payerUid || widget.canManage);
+    final canCancel =
+        payment.status == SharedExpensePaymentStatus.reported &&
+        widget.currentUid == payment.participantUid;
+    return Card(
+      child: ListTile(
+        leading: Icon(_paymentIcon(payment.status)),
+        title: Text(
+          '${_names[payment.participantUid] ?? 'Integrante'} · ${_money(payment.amountMinor)}',
+        ),
+        subtitle: Text(
+          '${_paymentStatusLabel(payment.status)} · ${DateFormat('dd/MM/yyyy HH:mm').format(payment.createdAt)}'
+          '${payment.note?.isNotEmpty ?? false ? '\n${payment.note}' : ''}',
+        ),
+        isThreeLine: payment.note?.isNotEmpty ?? false,
+        trailing:
+            canResolve
+                ? PopupMenuButton<SharedExpensePaymentStatus>(
+                  tooltip: 'Confirmar o rechazar',
+                  onSelected: (status) => _resolve(payment, status),
+                  itemBuilder:
+                      (_) => const [
+                        PopupMenuItem(
+                          value: SharedExpensePaymentStatus.confirmed,
+                          child: Text('Confirmar pago'),
+                        ),
+                        PopupMenuItem(
+                          value: SharedExpensePaymentStatus.rejected,
+                          child: Text('Rechazar'),
+                        ),
+                      ],
+                )
+                : canCancel
+                ? IconButton(
+                  tooltip: 'Cancelar informe',
+                  onPressed:
+                      () => _resolve(
+                        payment,
+                        SharedExpensePaymentStatus.cancelled,
+                      ),
+                  icon: const Icon(Icons.close),
+                )
+                : null,
+      ),
+    );
+  }
+
+  Future<void> _reportPayment(List<SharedExpensePayment> payments) async {
+    final available =
+        widget.expense.remainingMinorFor(widget.currentUid, payments) -
+        widget.expense.reportedPaidMinorFor(widget.currentUid, payments);
+    final amountController = TextEditingController(
+      text: (available / 100).toStringAsFixed(2),
+    );
+    final noteController = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Informar devolución'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Puedes informar hasta ${_money(available)}.'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Monto devuelto',
+                    prefixText: r'$ ',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: noteController,
+                  maxLength: 80,
+                  decoration: const InputDecoration(
+                    labelText: 'Nota opcional',
+                    hintText: 'Ej. Transferencia bancaria',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Informar pago'),
+              ),
+            ],
+          ),
+    );
+    if (accepted != true) {
+      amountController.dispose();
+      noteController.dispose();
+      return;
+    }
+    final amount = _parseMoneyMinor(amountController.text);
+    final note = noteController.text;
+    amountController.dispose();
+    noteController.dispose();
+    if (amount == null || amount <= 0 || amount > available) {
+      _message('Ingresa un monto entre 0,01 y ${_money(available)}.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await widget.repository.addSharedExpensePayment(
+        householdId: widget.householdId,
+        uid: widget.currentUid,
+        expense: widget.expense,
+        amountMinor: amount,
+        note: note,
+      );
+      _message('Devolución informada. Falta que $payerName la confirme.');
+    } on AppException catch (error) {
+      _message(error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String get payerName => _names[widget.expense.paidByUid] ?? 'quien pagó';
+
+  Future<void> _resolve(
+    SharedExpensePayment payment,
+    SharedExpensePaymentStatus status,
+  ) async {
+    setState(() => _busy = true);
+    try {
+      await widget.repository.resolveSharedExpensePayment(
+        householdId: widget.householdId,
+        uid: widget.currentUid,
+        payment: payment,
+        status: status,
+      );
+      _message(
+        status == SharedExpensePaymentStatus.confirmed
+            ? 'Pago confirmado. La deuda fue actualizada.'
+            : status == SharedExpensePaymentStatus.rejected
+            ? 'Pago rechazado.'
+            : 'Informe de pago cancelado.',
+      );
+    } on AppException catch (error) {
+      _message(error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _deleteExpense(List<SharedExpensePayment> payments) async {
+    if (payments.isNotEmpty) {
+      _message('No se puede eliminar porque ya existe historial de pagos.');
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Eliminar división'),
+            content: const Text(
+              'Se eliminará sólo la división. El gasto registrado, si existe, se conservará.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Eliminar'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) return;
+    setState(() => _busy = true);
+    try {
+      await widget.repository.deleteSharedExpense(
+        widget.householdId,
+        widget.expense,
+      );
+      if (mounted) Navigator.pop(context);
+    } on AppException catch (error) {
+      _message(error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _message(String value) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
+  }
+}
+
+IconData _paymentIcon(SharedExpensePaymentStatus status) => switch (status) {
+  SharedExpensePaymentStatus.confirmed => Icons.check_circle,
+  SharedExpensePaymentStatus.rejected => Icons.error_outline,
+  SharedExpensePaymentStatus.cancelled => Icons.cancel_outlined,
+  SharedExpensePaymentStatus.reported => Icons.hourglass_top,
+};
+
+String _paymentStatusLabel(SharedExpensePaymentStatus status) =>
+    switch (status) {
+      SharedExpensePaymentStatus.confirmed => 'Confirmado',
+      SharedExpensePaymentStatus.rejected => 'Rechazado',
+      SharedExpensePaymentStatus.cancelled => 'Cancelado',
+      SharedExpensePaymentStatus.reported => 'Esperando confirmación',
+    };
+
 class _SharedExpenseForm extends StatefulWidget {
-  const _SharedExpenseForm({required this.members, required this.currentUid});
+  const _SharedExpenseForm({
+    required this.members,
+    required this.currentUid,
+    this.sourceTransaction,
+  });
 
   final List<HouseholdMember> members;
   final String currentUid;
+  final FinanceTransaction? sourceTransaction;
 
   @override
   State<_SharedExpenseForm> createState() => _SharedExpenseFormState();
@@ -410,9 +1005,20 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
   void initState() {
     super.initState();
     _participants.addAll(widget.members.map((member) => member.uid));
+    final source = widget.sourceTransaction;
+    if (source != null) {
+      _descriptionController.text = source.description;
+      _amountController.text = (source.amountMinor / 100).toStringAsFixed(2);
+      _category =
+          SharedExpenseCategories.values.contains(source.category)
+              ? source.category
+              : 'Otro';
+      _occurredAt = source.occurredAt;
+    }
+    final preferredPayer = source?.createdBy ?? widget.currentUid;
     _paidByUid =
-        widget.members.any((member) => member.uid == widget.currentUid)
-            ? widget.currentUid
+        widget.members.any((member) => member.uid == preferredPayer)
+            ? preferredPayer
             : widget.members.first.uid;
     for (final member in widget.members) {
       _shareControllers[member.uid] = TextEditingController();
@@ -446,23 +1052,42 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
           children: [
             Text(
-              '¿Qué cuenta van a dividir?',
+              widget.sourceTransaction == null
+                  ? '¿Qué cuenta van a dividir?'
+                  : 'Divide este gasto registrado',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 5),
-            const Text(
-              'Esta cuenta es independiente y no se descontará de ningún saldo.',
+            Text(
+              widget.sourceTransaction == null
+                  ? 'Esta cuenta es independiente y no se descontará de ningún saldo.'
+                  : 'La división se vincula al movimiento sin duplicarlo ni cambiar su valor.',
             ),
+            if (widget.sourceTransaction != null) ...[
+              const SizedBox(height: 12),
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: const ListTile(
+                  leading: Icon(Icons.link),
+                  title: Text('Datos completados automáticamente'),
+                  subtitle: Text(
+                    'Descripción, monto, fecha y categoría vienen del gasto original.',
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             TextField(
               key: const Key('shared_description'),
               controller: _descriptionController,
+              readOnly: widget.sourceTransaction != null,
               maxLength: 100,
               textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Descripción',
                 hintText: 'Ej. Cena, arriendo o viaje a Baños',
-                prefixIcon: Icon(Icons.receipt_long_outlined),
+                prefixIcon: const Icon(Icons.receipt_long_outlined),
+                counterText: widget.sourceTransaction == null ? null : '',
               ),
             ),
             const SizedBox(height: 8),
@@ -481,12 +1106,16 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
                       )
                       .toList(),
               onChanged:
-                  (value) => setState(() => _category = value ?? _category),
+                  widget.sourceTransaction == null
+                      ? (value) =>
+                          setState(() => _category = value ?? _category)
+                      : null,
             ),
             const SizedBox(height: 12),
             TextField(
               key: const Key('shared_amount'),
               controller: _amountController,
+              readOnly: widget.sourceTransaction != null,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
               ),
@@ -500,74 +1129,76 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
               ),
             ),
             const SizedBox(height: 12),
-            Card(
-              child: ExpansionTile(
-                leading: const Icon(Icons.calculate_outlined),
-                title: const Text('Calculadora para Ecuador'),
-                subtitle: Text(
-                  _calculateEcuadorExtras
-                      ? 'Total calculado: ${_money(total)}'
-                      : 'Úsala si ingresaste un subtotal',
-                ),
-                children: [
-                  SwitchListTile(
-                    title: const Text('Calcular desde el subtotal'),
-                    subtitle: const Text(
-                      'Suma únicamente los valores que correspondan a tu factura.',
-                    ),
-                    value: _calculateEcuadorExtras,
-                    onChanged:
-                        (value) =>
-                            setState(() => _calculateEcuadorExtras = value),
+            if (widget.sourceTransaction == null)
+              Card(
+                child: ExpansionTile(
+                  leading: const Icon(Icons.calculate_outlined),
+                  title: const Text('Calculadora para Ecuador'),
+                  subtitle: Text(
+                    _calculateEcuadorExtras
+                        ? 'Total calculado: ${_money(total)}'
+                        : 'Úsala si ingresaste un subtotal',
                   ),
-                  CheckboxListTile(
-                    title: const Text('IVA general 15%'),
-                    subtitle: const Text(
-                      'No todos los bienes y servicios tienen esta tarifa.',
-                    ),
-                    value: _includeVat,
-                    onChanged:
-                        _calculateEcuadorExtras
-                            ? (value) =>
-                                setState(() => _includeVat = value ?? false)
-                            : null,
-                  ),
-                  CheckboxListTile(
-                    title: const Text('Servicio 10%'),
-                    subtitle: const Text(
-                      'Para establecimientos donde conste en la cuenta.',
-                    ),
-                    value: _includeService,
-                    onChanged:
-                        _calculateEcuadorExtras
-                            ? (value) =>
-                                setState(() => _includeService = value ?? false)
-                            : null,
-                  ),
-                  if (_calculateEcuadorExtras)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Total para dividir',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            _money(total),
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w900),
-                          ),
-                        ],
+                  children: [
+                    SwitchListTile(
+                      title: const Text('Calcular desde el subtotal'),
+                      subtitle: const Text(
+                        'Suma únicamente los valores que correspondan a tu factura.',
                       ),
+                      value: _calculateEcuadorExtras,
+                      onChanged:
+                          (value) =>
+                              setState(() => _calculateEcuadorExtras = value),
                     ),
-                ],
+                    CheckboxListTile(
+                      title: const Text('IVA general 15%'),
+                      subtitle: const Text(
+                        'No todos los bienes y servicios tienen esta tarifa.',
+                      ),
+                      value: _includeVat,
+                      onChanged:
+                          _calculateEcuadorExtras
+                              ? (value) =>
+                                  setState(() => _includeVat = value ?? false)
+                              : null,
+                    ),
+                    CheckboxListTile(
+                      title: const Text('Servicio 10%'),
+                      subtitle: const Text(
+                        'Para establecimientos donde conste en la cuenta.',
+                      ),
+                      value: _includeService,
+                      onChanged:
+                          _calculateEcuadorExtras
+                              ? (value) => setState(
+                                () => _includeService = value ?? false,
+                              )
+                              : null,
+                    ),
+                    if (_calculateEcuadorExtras)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total para dividir',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              _money(total),
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w900),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
-              onPressed: _pickDate,
+              onPressed: widget.sourceTransaction == null ? _pickDate : null,
               icon: const Icon(Icons.event_outlined),
               label: Text(
                 'Fecha: ${DateFormat('dd/MM/yyyy').format(_occurredAt)}',
@@ -895,6 +1526,7 @@ class _SharedExpenseFormState extends State<_SharedExpenseForm> {
         paidByUid: _paidByUid,
         splitMode: _splitMode,
         participantSharesMinor: shares,
+        sourceTransactionId: widget.sourceTransaction?.id,
         includesVat: _calculateEcuadorExtras && _includeVat,
         includesService: _calculateEcuadorExtras && _includeService,
       ),

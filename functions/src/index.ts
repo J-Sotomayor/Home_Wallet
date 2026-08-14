@@ -26,7 +26,10 @@ import {
   onCall,
 } from "firebase-functions/v2/https";
 import {onSchedule} from "firebase-functions/v2/scheduler";
-import {onDocumentCreated} from "firebase-functions/v2/firestore";
+import {
+  onDocumentCreated,
+  onDocumentUpdated,
+} from "firebase-functions/v2/firestore";
 
 initializeApp();
 
@@ -466,6 +469,57 @@ export const notifyNewSharedExpense = onDocumentCreated(
       copy.title,
       copy.body,
       "shared-expense",
+    );
+  },
+);
+
+export const notifySharedExpensePayment = onDocumentCreated(
+  "households/{householdId}/sharedExpensePayments/{paymentId}",
+  async (event) => {
+    const data = event.data?.data();
+    const participant = typeof data?.participantUid === "string" ?
+      data.participantUid : null;
+    const payer = typeof data?.payerUid === "string" ? data.payerUid : null;
+    if (!participant || !payer || participant === payer) return;
+    const name = await actorName(participant);
+    await sendPushToUsers(
+      [payer],
+      "Pago informado",
+      `${name} informó una devolución. Ábrela para confirmar el pago.`,
+      {
+        householdId: event.params.householdId,
+        type: "shared-payment-reported",
+        expenseId: String(data?.expenseId ?? ""),
+      },
+    );
+  },
+);
+
+export const notifySharedExpensePaymentResolved = onDocumentUpdated(
+  "households/{householdId}/sharedExpensePayments/{paymentId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after || before.status === after.status) return;
+    const participant = typeof after.participantUid === "string" ?
+      after.participantUid : null;
+    const resolver = typeof after.resolvedBy === "string" ?
+      after.resolvedBy : null;
+    if (!participant || participant === resolver || after.status === "cancelled") {
+      return;
+    }
+    const accepted = after.status === "confirmed";
+    await sendPushToUsers(
+      [participant],
+      accepted ? "Pago confirmado" : "Pago por revisar",
+      accepted ?
+        "Tu devolución fue confirmada y la deuda se actualizó." :
+        "Tu devolución fue rechazada. Revisa el detalle del gasto.",
+      {
+        householdId: event.params.householdId,
+        type: accepted ? "shared-payment-confirmed" : "shared-payment-rejected",
+        expenseId: String(after.expenseId ?? ""),
+      },
     );
   },
 );

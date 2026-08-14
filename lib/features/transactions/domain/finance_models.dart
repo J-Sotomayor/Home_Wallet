@@ -56,6 +56,7 @@ class SharedExpense {
     required this.paidByUid,
     required this.splitMode,
     required this.participantSharesMinor,
+    this.sourceTransactionId,
     this.settledParticipantIds = const {},
     this.includesVat = false,
     this.includesService = false,
@@ -70,6 +71,11 @@ class SharedExpense {
   final String paidByUid;
   final ExpenseSplitMode splitMode;
   final Map<String, int> participantSharesMinor;
+
+  /// Present when this division was created from an existing movement.
+  /// The movement remains the source of truth for cash flow; this record only
+  /// tracks who owes whom.
+  final String? sourceTransactionId;
   final Set<String> settledParticipantIds;
   final bool includesVat;
   final bool includesService;
@@ -81,6 +87,53 @@ class SharedExpense {
             !settledParticipantIds.contains(entry.key),
       )
       .fold(0, (sum, entry) => sum + entry.value);
+
+  int confirmedPaidMinorFor(
+    String participantUid,
+    Iterable<SharedExpensePayment> payments,
+  ) {
+    final share = participantSharesMinor[participantUid] ?? 0;
+    if (participantUid == paidByUid ||
+        settledParticipantIds.contains(participantUid)) {
+      return share;
+    }
+    final paid = payments
+        .where(
+          (payment) =>
+              payment.expenseId == id &&
+              payment.participantUid == participantUid &&
+              payment.status == SharedExpensePaymentStatus.confirmed,
+        )
+        .fold<int>(0, (sum, payment) => sum + payment.amountMinor);
+    return paid.clamp(0, share);
+  }
+
+  int reportedPaidMinorFor(
+    String participantUid,
+    Iterable<SharedExpensePayment> payments,
+  ) => payments
+      .where(
+        (payment) =>
+            payment.expenseId == id &&
+            payment.participantUid == participantUid &&
+            payment.status == SharedExpensePaymentStatus.reported,
+      )
+      .fold<int>(0, (sum, payment) => sum + payment.amountMinor);
+
+  int remainingMinorFor(
+    String participantUid,
+    Iterable<SharedExpensePayment> payments,
+  ) => ((participantSharesMinor[participantUid] ?? 0) -
+          confirmedPaidMinorFor(participantUid, payments))
+      .clamp(0, participantSharesMinor[participantUid] ?? 0);
+
+  int pendingMinorWith(Iterable<SharedExpensePayment> payments) =>
+      participantSharesMinor.entries
+          .where((entry) => entry.key != paidByUid)
+          .fold<int>(
+            0,
+            (sum, entry) => sum + remainingMinorFor(entry.key, payments),
+          );
 }
 
 class SharedExpenseDraft {
@@ -92,6 +145,7 @@ class SharedExpenseDraft {
     required this.paidByUid,
     required this.splitMode,
     required this.participantSharesMinor,
+    this.sourceTransactionId,
     this.settledParticipantIds = const {},
     this.includesVat = false,
     this.includesService = false,
@@ -104,9 +158,54 @@ class SharedExpenseDraft {
   final String paidByUid;
   final ExpenseSplitMode splitMode;
   final Map<String, int> participantSharesMinor;
+  final String? sourceTransactionId;
   final Set<String> settledParticipantIds;
   final bool includesVat;
   final bool includesService;
+}
+
+enum SharedExpensePaymentStatus {
+  reported,
+  confirmed,
+  rejected,
+  cancelled;
+
+  static SharedExpensePaymentStatus parse(Object? value) => switch (value) {
+    'confirmed' => SharedExpensePaymentStatus.confirmed,
+    'rejected' => SharedExpensePaymentStatus.rejected,
+    'cancelled' => SharedExpensePaymentStatus.cancelled,
+    _ => SharedExpensePaymentStatus.reported,
+  };
+}
+
+/// A reimbursement report. It is separate from the financial movement and
+/// requires confirmation by the person who paid the original bill.
+class SharedExpensePayment {
+  const SharedExpensePayment({
+    required this.id,
+    required this.expenseId,
+    required this.participantUid,
+    required this.payerUid,
+    required this.amountMinor,
+    required this.createdAt,
+    required this.createdBy,
+    required this.status,
+    this.note,
+    this.updatedAt,
+    this.resolvedBy,
+  });
+
+  final String id;
+  final String expenseId;
+  final String participantUid;
+  final String payerUid;
+  final int amountMinor;
+  final DateTime createdAt;
+  final String createdBy;
+  final SharedExpensePaymentStatus status;
+  final String? note;
+  final DateTime? updatedAt;
+  final String? resolvedBy;
 }
 
 abstract final class SharedExpenseCategories {

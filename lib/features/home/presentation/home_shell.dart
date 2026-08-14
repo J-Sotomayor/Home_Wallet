@@ -533,7 +533,10 @@ class _DashboardTab extends StatelessWidget {
                                   onOpenRecurring:
                                       () => _openRecurring(context),
                                   onOpenSharedExpenses:
-                                      () => _openSharedExpenses(context),
+                                      () => _openSharedExpenses(
+                                        context,
+                                        household.canManage,
+                                      ),
                                   onOpenImport: () => _openImport(context),
                                   onOpenTransactions: onOpenTransactions,
                                   onOpenSavings: onOpenSavings,
@@ -655,7 +658,7 @@ class _DashboardTab extends StatelessWidget {
     );
   }
 
-  void _openSharedExpenses(BuildContext context) {
+  void _openSharedExpenses(BuildContext context, bool canManage) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder:
@@ -665,6 +668,7 @@ class _DashboardTab extends StatelessWidget {
               repository: services.finance,
               households: services.households,
               canContribute: canContribute,
+              canManage: canManage,
             ),
       ),
     );
