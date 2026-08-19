@@ -29,13 +29,16 @@ class TransactionExportService {
   Uint8List exportExcel(
     List<FinanceTransaction> transactions, {
     Map<String, String> memberNames = const {},
+    bool analysisOnly = false,
+    String reportTitle = 'Estado de movimientos',
   }) {
     final sorted = _sorted(transactions, memberNames: memberNames);
     final totals = _totals(sorted);
     final period = _period(sorted);
     final excel = Excel.createExcel();
-    excel.rename('Sheet1', 'Movimientos');
-    final sheet = excel['Movimientos'];
+    final sheetName = analysisOnly ? 'Análisis' : 'Movimientos';
+    excel.rename('Sheet1', sheetName);
+    final sheet = excel[sheetName];
 
     final blue = ExcelColor.fromHexString('FF2563EB');
     final dark = ExcelColor.fromHexString('FF111827');
@@ -103,7 +106,12 @@ class TransactionExportService {
       bottomBorder: thinGray,
     );
 
-    _mergeAndWrite(sheet, 'A1', 'F1', 'HOMEWALLET · ESTADO DE MOVIMIENTOS');
+    _mergeAndWrite(
+      sheet,
+      'A1',
+      'F1',
+      'HOMEWALLET · ${reportTitle.toUpperCase()}',
+    );
     _styleRange(sheet, 0, 0, 0, 5, titleStyle);
     sheet.setRowHeight(0, 34);
     _mergeAndWrite(
@@ -147,6 +155,104 @@ class TransactionExportService {
     );
     _styleRange(sheet, 5, 0, 5, 5, netStyle);
     sheet.setRowHeight(5, 25);
+
+    if (analysisOnly) {
+      final categoryTotals = _expenseTotals(sorted);
+      final advice = _financialAdvice(totals, categoryTotals);
+      _mergeAndWrite(sheet, 'A8', 'F8', 'ANÁLISIS DE GASTOS POR CATEGORÍA');
+      _styleRange(sheet, 7, 0, 7, 5, sectionStyle);
+      const analysisHeaders = [
+        'Categoría',
+        'Monto',
+        'Participación',
+        'Gráfico',
+        '',
+        '',
+      ];
+      for (var column = 0; column < analysisHeaders.length; column++) {
+        sheet.updateCell(
+          CellIndex.indexByColumnRow(columnIndex: column, rowIndex: 8),
+          TextCellValue(analysisHeaders[column]),
+          cellStyle: headerStyle,
+        );
+      }
+      var row = 9;
+      final ranked =
+          categoryTotals.entries.toList()
+            ..sort((left, right) => right.value.compareTo(left.value));
+      for (final entry in ranked.take(10)) {
+        final ratio = totals.expense == 0 ? 0.0 : entry.value / totals.expense;
+        final blocks = (ratio * 20).round().clamp(1, 20);
+        sheet.updateCell(
+          CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row),
+          TextCellValue(entry.key),
+        );
+        sheet.updateCell(
+          CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row),
+          DoubleCellValue(entry.value / 100),
+          cellStyle: CellStyle(numberFormat: currency),
+        );
+        sheet.updateCell(
+          CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: row),
+          TextCellValue('${(ratio * 100).toStringAsFixed(1)}%'),
+        );
+        sheet.merge(
+          CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: row),
+          CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: row),
+          customValue: TextCellValue(List.filled(blocks, '█').join()),
+        );
+        _styleRange(
+          sheet,
+          row,
+          3,
+          row,
+          5,
+          CellStyle(fontColorHex: blue, bold: true),
+        );
+        row++;
+      }
+      if (ranked.isEmpty) {
+        _mergeAndWrite(
+          sheet,
+          'A10',
+          'F10',
+          'No hay gastos para analizar en este período.',
+        );
+        row = 10;
+      }
+      row += 2;
+      _mergeAndWrite(
+        sheet,
+        'A${row + 1}',
+        'F${row + 1}',
+        'RECOMENDACIONES DE SALUD FINANCIERA',
+      );
+      _styleRange(sheet, row, 0, row, 5, sectionStyle);
+      row++;
+      for (final recommendation in advice) {
+        _mergeAndWrite(
+          sheet,
+          'A${row + 1}',
+          'F${row + 1}',
+          '• $recommendation',
+        );
+        _styleRange(sheet, row, 0, row, 5, subtitleStyle);
+        sheet.setRowHeight(row, 32);
+        row++;
+      }
+      sheet
+        ..setColumnWidth(0, 26)
+        ..setColumnWidth(1, 17)
+        ..setColumnWidth(2, 16)
+        ..setColumnWidth(3, 14)
+        ..setColumnWidth(4, 14)
+        ..setColumnWidth(5, 14);
+      final encoded = excel.encode();
+      if (encoded == null) {
+        throw StateError('No se pudo generar el análisis Excel.');
+      }
+      return Uint8List.fromList(encoded);
+    }
 
     _mergeAndWrite(sheet, 'A8', 'F8', 'DETALLE DE MOVIMIENTOS');
     _styleRange(sheet, 7, 0, 7, 5, sectionStyle);
@@ -274,17 +380,19 @@ class TransactionExportService {
   Future<Uint8List> exportPdf(
     List<FinanceTransaction> transactions, {
     Map<String, String> memberNames = const {},
+    bool analysisOnly = false,
+    String reportTitle = 'Estado de movimientos',
   }) async {
     final sorted = _sorted(transactions, memberNames: memberNames);
     final totals = _totals(sorted);
     final period = _period(sorted);
-    final blue = PdfColor.fromHex('#2563EB');
-    final dark = PdfColor.fromHex('#111827');
-    final paleBlue = PdfColor.fromHex('#EFF6FF');
-    final paleGray = PdfColor.fromHex('#F8FAFC');
-    final gray = PdfColor.fromHex('#D1D5DB');
-    final green = PdfColor.fromHex('#15803D');
-    final red = PdfColor.fromHex('#B91C1C');
+    final blue = PdfColor.fromHex('#8FC9C2');
+    final dark = PdfColor.fromHex('#292B2E');
+    final paleBlue = PdfColor.fromHex('#DDEFEA');
+    final paleGray = PdfColor.fromHex('#FAFAF8');
+    final gray = PdfColor.fromHex('#E8E6E2');
+    final green = PdfColor.fromHex('#3F706B');
+    final red = PdfColor.fromHex('#9B5049');
     final regularData = await rootBundle.load(
       'assets/fonts/Roboto-Regular.ttf',
     );
@@ -292,10 +400,13 @@ class TransactionExportService {
     final regularFont = pw.Font.ttf(regularData);
     final boldFont = pw.Font.ttf(boldData);
     final document = pw.Document(
-      title: 'Estado de movimientos HomeWallet',
+      title: '$reportTitle · HomeWallet',
       author: 'HomeWallet',
       creator: 'HomeWallet',
-      subject: 'Movimientos del espacio financiero',
+      subject:
+          analysisOnly
+              ? 'Análisis de salud financiera'
+              : 'Movimientos del espacio financiero',
       theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
     );
 
@@ -338,7 +449,7 @@ class TransactionExportService {
                     ),
                     pw.Spacer(),
                     pw.Text(
-                      'ESTADO DE MOVIMIENTOS',
+                      reportTitle.toUpperCase(),
                       style: pw.TextStyle(color: dark, fontSize: 13),
                     ),
                   ],
@@ -442,53 +553,65 @@ class TransactionExportService {
                 blue: blue,
                 background: paleBlue,
               ),
-              pw.SizedBox(height: 18),
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.symmetric(
-                  vertical: 7,
-                  horizontal: 9,
-                ),
-                color: blue,
-                child: pw.Text(
-                  'DETALLE DE MOVIMIENTOS',
-                  style: pw.TextStyle(
-                    color: PdfColors.white,
-                    fontSize: 10,
-                    fontWeight: pw.FontWeight.bold,
-                  ),
-                ),
-              ),
-              ..._pdfTransactionSections(
-                sorted,
-                memberNames: memberNames,
+              pw.SizedBox(height: 12),
+              _pdfExpenseAnalysis(
+                transactions: sorted,
+                totals: totals,
                 dark: dark,
                 blue: blue,
-                gray: gray,
-                paleGray: paleGray,
+                red: red,
+                green: green,
+                background: paleBlue,
               ),
-              pw.SizedBox(height: 10),
-              pw.Align(
-                alignment: pw.Alignment.centerRight,
-                child: pw.Container(
+              if (!analysisOnly) ...[
+                pw.SizedBox(height: 18),
+                pw.Container(
+                  width: double.infinity,
                   padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 10,
                     vertical: 7,
+                    horizontal: 9,
                   ),
-                  decoration: pw.BoxDecoration(
-                    color: dark,
-                    borderRadius: pw.BorderRadius.circular(5),
-                  ),
+                  color: blue,
                   child: pw.Text(
-                    'Total débitos: ${_money(totals.expense + totals.saving)}    Total créditos: ${_money(totals.income)}',
+                    'DETALLE DE MOVIMIENTOS',
                     style: pw.TextStyle(
                       color: PdfColors.white,
-                      fontSize: 8,
+                      fontSize: 10,
                       fontWeight: pw.FontWeight.bold,
                     ),
                   ),
                 ),
-              ),
+                ..._pdfTransactionSections(
+                  sorted,
+                  memberNames: memberNames,
+                  dark: dark,
+                  blue: blue,
+                  gray: gray,
+                  paleGray: paleGray,
+                ),
+                pw.SizedBox(height: 10),
+                pw.Align(
+                  alignment: pw.Alignment.centerRight,
+                  child: pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: pw.BoxDecoration(
+                      color: dark,
+                      borderRadius: pw.BorderRadius.circular(5),
+                    ),
+                    child: pw.Text(
+                      'Total débitos: ${_money(totals.expense + totals.saving)}    Total créditos: ${_money(totals.income)}',
+                      style: pw.TextStyle(
+                        color: PdfColors.white,
+                        fontSize: 8,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
       ),
     );
@@ -582,6 +705,143 @@ class TransactionExportService {
           ),
           bar('Gastos/ingresos', expenseRatio, expenseRatio > 1 ? red : green),
           bar('Ahorro/ingresos', savingRatio, blue),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _pdfExpenseAnalysis({
+    required List<FinanceTransaction> transactions,
+    required _ExportTotals totals,
+    required PdfColor dark,
+    required PdfColor blue,
+    required PdfColor red,
+    required PdfColor green,
+    required PdfColor background,
+  }) {
+    final categories = _expenseTotals(transactions);
+    final ranked =
+        categories.entries.toList()
+          ..sort((left, right) => right.value.compareTo(left.value));
+    final advice = _financialAdvice(totals, categories);
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        color: background,
+        borderRadius: pw.BorderRadius.circular(7),
+      ),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            '¿EN QUÉ SE FUE EL DINERO?',
+            style: pw.TextStyle(
+              color: dark,
+              fontSize: 9,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          pw.SizedBox(height: 7),
+          if (ranked.isEmpty)
+            pw.Text(
+              'No hay gastos para analizar en este período.',
+              style: pw.TextStyle(color: dark, fontSize: 8),
+            )
+          else
+            ...ranked.take(7).map((entry) {
+              final ratio =
+                  totals.expense == 0 ? 0.0 : entry.value / totals.expense;
+              final active = (ratio.clamp(0, 1) * 100).round();
+              return pw.Padding(
+                padding: const pw.EdgeInsets.only(bottom: 6),
+                child: pw.Column(
+                  children: [
+                    pw.Row(
+                      children: [
+                        pw.Expanded(
+                          child: pw.Text(
+                            entry.key,
+                            style: pw.TextStyle(color: dark, fontSize: 8),
+                          ),
+                        ),
+                        pw.Text(
+                          '${(ratio * 100).toStringAsFixed(0)}% · ${_money(entry.value)}',
+                          style: pw.TextStyle(
+                            color: dark,
+                            fontSize: 8,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Row(
+                      children: [
+                        if (active > 0)
+                          pw.Expanded(
+                            flex: active,
+                            child: pw.Container(height: 7, color: blue),
+                          ),
+                        if (active < 100)
+                          pw.Expanded(
+                            flex: 100 - active,
+                            child: pw.Container(
+                              height: 7,
+                              color: PdfColors.grey300,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          pw.SizedBox(height: 5),
+          pw.Text(
+            'RECOMENDACIONES',
+            style: pw.TextStyle(
+              color: dark,
+              fontSize: 9,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          pw.SizedBox(height: 4),
+          ...advice.map(
+            (text) => pw.Padding(
+              padding: const pw.EdgeInsets.only(bottom: 3),
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('• ', style: pw.TextStyle(color: blue, fontSize: 8)),
+                  pw.Expanded(
+                    child: pw.Text(
+                      text,
+                      style: pw.TextStyle(
+                        color:
+                            totals.expense > totals.income &&
+                                    text.startsWith('Tus gastos')
+                                ? red
+                                : dark,
+                        fontSize: 8,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          pw.SizedBox(height: 3),
+          pw.Text(
+            totals.net >= 0
+                ? 'Balance del período favorable: ${_money(totals.net)}.'
+                : 'Déficit del período: ${_money(totals.net.abs())}.',
+            style: pw.TextStyle(
+              color: totals.net >= 0 ? green : red,
+              fontSize: 8,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
         ],
       ),
     );
@@ -779,6 +1039,67 @@ class TransactionExportService {
       expense: sum(TransactionType.expense),
       saving: sum(TransactionType.saving),
     );
+  }
+
+  static Map<String, int> _expenseTotals(
+    Iterable<FinanceTransaction> transactions,
+  ) {
+    final result = <String, int>{};
+    for (final transaction in transactions.where(
+      (item) => item.type == TransactionType.expense,
+    )) {
+      result.update(
+        transaction.category,
+        (value) => value + transaction.amountMinor,
+        ifAbsent: () => transaction.amountMinor,
+      );
+    }
+    return result;
+  }
+
+  static List<String> _financialAdvice(
+    _ExportTotals totals,
+    Map<String, int> categoryTotals,
+  ) {
+    final ranked =
+        categoryTotals.entries.toList()
+          ..sort((left, right) => right.value.compareTo(left.value));
+    final advice = <String>[];
+    if (totals.income <= 0) {
+      advice.add(
+        'No hay ingresos en el período; confirma que el estado de cuenta esté completo antes de tomar decisiones.',
+      );
+    } else if (totals.expense > totals.income) {
+      advice.add(
+        'Tus gastos superan tus ingresos. Prioriza pagos esenciales y define un límite semanal para gastos variables.',
+      );
+    } else if (totals.expense * 100 >= totals.income * 80) {
+      advice.add(
+        'Usaste al menos el 80% de tus ingresos. Intenta reservar primero entre 10% y 20% para ahorro o emergencias.',
+      );
+    } else {
+      advice.add(
+        'El flujo del período es positivo. Separa una parte del excedente para ahorro y metas antes de aumentar gastos.',
+      );
+    }
+    if (ranked.isNotEmpty) {
+      final top = ranked.first;
+      final share = totals.expense == 0 ? 0 : top.value / totals.expense * 100;
+      advice.add(
+        '${top.key} concentra ${share.toStringAsFixed(0)}% de tus gastos. Revísala primero para encontrar oportunidades de ajuste.',
+      );
+    }
+    final other =
+        (categoryTotals['Otro'] ?? 0) + (categoryTotals['Otros'] ?? 0);
+    if (other > 0) {
+      advice.add(
+        'Clasifica los consumos marcados como “Otros”; una categoría precisa hace que las recomendaciones sean más útiles.',
+      );
+    }
+    advice.add(
+      'Compara este análisis con el siguiente período para detectar tendencias, cobros repetidos y aumentos inusuales.',
+    );
+    return advice;
   }
 
   static String _period(List<FinanceTransaction> transactions) {

@@ -16,7 +16,7 @@ class AboutHomeWalletScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.xl),
         children: [
-          const Center(child: HomeWalletLogo(width: 300, height: 90)),
+          const Center(child: HomeWalletLogo(width: 270, height: 250)),
           const SizedBox(height: AppSpacing.xl),
           Text(
             'Un espacio organizado también se construye con decisiones financieras claras.',
@@ -42,7 +42,7 @@ class AboutHomeWalletScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 const Text(
-                  'El techo representa el hogar; la forma redondeada, una billetera compartida; y la confirmación verde, el avance hacia una meta. El detalle rosa aporta cercanía familiar.',
+                  'La casa representa tus espacios financieros; la billetera lavanda, su administración; y las hojas menta, el crecimiento y bienestar que construyes con cada decisión.',
                 ),
               ],
             ),
@@ -64,7 +64,7 @@ class AboutHomeWalletScreen extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.xl),
           Text(
-            'Versión 1.0.7',
+            'Versión 1.0.16',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall,
           ),

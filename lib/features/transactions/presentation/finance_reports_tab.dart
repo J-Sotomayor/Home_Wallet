@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../app/theme/app_colors.dart';
 import '../../../app/widgets/app_page_header.dart';
 import '../../../core/errors/app_exception.dart';
 import '../data/finance_repository.dart';
@@ -18,6 +19,7 @@ import '../services/transaction_export_service.dart';
 enum _ReportView { month, bank }
 
 enum _BankSelection {
+  all('Todos los bancos'),
   pichincha('Pichincha'),
   guayaquil('Guayaquil');
 
@@ -25,9 +27,11 @@ enum _BankSelection {
 
   final String label;
 
-  bool matches(FinanceTransaction transaction) => (transaction.sourceName ?? '')
-      .toLowerCase()
-      .contains(label.toLowerCase());
+  bool matches(FinanceTransaction transaction) =>
+      this == _BankSelection.all ||
+      (transaction.sourceName ?? '').toLowerCase().contains(
+        label.toLowerCase(),
+      );
 }
 
 class FinanceReportsTab extends StatefulWidget {
@@ -56,7 +60,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
   static const _csv = TransactionCsvService();
   static const _exports = TransactionExportService();
   _ReportView _view = _ReportView.month;
-  _BankSelection _bank = _BankSelection.pichincha;
+  _BankSelection _bank = _BankSelection.all;
   String? _category;
   DateTime? _selectedMonth;
   bool _exporting = false;
@@ -145,7 +149,12 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
                     }),
                 onCategoryChanged: (value) => setState(() => _category = value),
                 exporting: _exporting,
-                onExport: () => _chooseExport(transactions, members),
+                onExport:
+                    () => _chooseExport(
+                      transactions,
+                      members,
+                      reportMonth: reportMonth,
+                    ),
               );
             },
           );
@@ -163,8 +172,9 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 
   Future<void> _chooseExport(
     List<FinanceTransaction> filteredTransactions,
-    List<HouseholdMember> members,
-  ) async {
+    List<HouseholdMember> members, {
+    required DateTime reportMonth,
+  }) async {
     if (filteredTransactions.isEmpty || _exporting) return;
     final choice = await showModalBottomSheet<_ExportChoice>(
       context: context,
@@ -177,6 +187,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
             currentUid: widget.currentUid,
             currentUserName: widget.currentUserName,
             householdKind: widget.householdKind,
+            analysisOnly: _view == _ReportView.bank,
           ),
     );
     if (choice == null || !mounted) return;
@@ -198,14 +209,23 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
 
     setState(() => _exporting = true);
     try {
+      final analysisOnly = _view == _ReportView.bank;
+      final reportTitle =
+          analysisOnly
+              ? 'Análisis bancario · ${_bank.label}'
+              : 'Reporte mensual · ${_monthLabel(reportMonth)}';
       final Uint8List bytes = switch (choice.format) {
         _ExportFormat.excel => _exports.exportExcel(
           selected,
           memberNames: choice.memberNames,
+          analysisOnly: analysisOnly,
+          reportTitle: reportTitle,
         ),
         _ExportFormat.pdf => await _exports.exportPdf(
           selected,
           memberNames: choice.memberNames,
+          analysisOnly: analysisOnly,
+          reportTitle: reportTitle,
         ),
         _ExportFormat.csv => _csv.exportBytes(
           selected,
@@ -453,8 +473,10 @@ class _ReportBody extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 6),
-                const Text(
-                  'Usará únicamente los datos de la vista y categoría seleccionadas.',
+                Text(
+                  view == _ReportView.bank
+                      ? 'Exportará el análisis financiero, los gráficos y las recomendaciones; no copiará el listado de movimientos del banco.'
+                      : 'Exportará únicamente los movimientos registrados en HomeWallet durante el mes; no incluirá importaciones bancarias.',
                 ),
                 const SizedBox(height: 12),
                 FilledButton.tonalIcon(
@@ -655,35 +677,69 @@ class _MonthlyComparisonCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final expenseChange = comparison.expenseChangePercent;
-    final incomeChange = comparison.incomeChangePercent;
     final scheme = Theme.of(context).colorScheme;
     return _SectionCard(
-      icon: Icons.compare_arrows_outlined,
+      icon: Icons.insights_outlined,
       title: 'Comparación con ${_monthLabel(comparison.previousMonth)}',
       children: [
-        _ComparisonRow(
+        Text(
+          'Mira qué cambió frente al mes anterior. Toca una tarjeta para entender el resultado.',
+          style: TextStyle(color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 14),
+        _ComparisonMetricCard(
           label: 'Gastos',
+          icon: Icons.arrow_upward_rounded,
           currentMinor: comparison.currentExpenseMinor,
           previousMinor: comparison.previousExpenseMinor,
-          changePercent: expenseChange,
+          changePercent: comparison.expenseChangePercent,
           increaseIsPositive: false,
+          currentMonth: comparison.month,
+          previousMonth: comparison.previousMonth,
         ),
         const SizedBox(height: 12),
-        _ComparisonRow(
+        _ComparisonMetricCard(
           label: 'Ingresos',
+          icon: Icons.arrow_downward_rounded,
           currentMinor: comparison.currentIncomeMinor,
           previousMinor: comparison.previousIncomeMinor,
-          changePercent: incomeChange,
+          changePercent: comparison.incomeChangePercent,
           increaseIsPositive: true,
+          currentMonth: comparison.month,
+          previousMonth: comparison.previousMonth,
         ),
         if (comparison.categoryWithLargestIncrease != null &&
             comparison.largestCategoryIncreaseMinor > 0) ...[
-          const SizedBox(height: 12),
-          Text(
-            'Mayor aumento: ${comparison.categoryWithLargestIncrease} '
-            '(+${_money(comparison.largestCategoryIncreaseMinor)}).',
-            style: TextStyle(color: scheme.onSurfaceVariant),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.category_outlined, color: scheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Categoría que más creció',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${comparison.categoryWithLargestIncrease} aumentó ${_money(comparison.largestCategoryIncreaseMinor)} frente a ${_monthLabel(comparison.previousMonth)}.',
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ],
@@ -691,63 +747,291 @@ class _MonthlyComparisonCard extends StatelessWidget {
   }
 }
 
-class _ComparisonRow extends StatelessWidget {
-  const _ComparisonRow({
+class _ComparisonMetricCard extends StatelessWidget {
+  const _ComparisonMetricCard({
     required this.label,
+    required this.icon,
     required this.currentMinor,
     required this.previousMinor,
     required this.changePercent,
     required this.increaseIsPositive,
+    required this.currentMonth,
+    required this.previousMonth,
   });
 
   final String label;
+  final IconData icon;
   final int currentMinor;
   final int previousMinor;
   final double? changePercent;
   final bool increaseIsPositive;
+  final DateTime currentMonth;
+  final DateTime previousMonth;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final change = changePercent;
     final increased = change != null && change > 0;
     final decreased = change != null && change < 0;
     final favorable = increased ? increaseIsPositive : decreased;
+    final hasComparableBase = change != null;
     final color =
-        change == null || change == 0
-            ? Theme.of(context).colorScheme.onSurfaceVariant
+        !hasComparableBase || change == 0
+            ? scheme.primary
             : favorable
-            ? const Color(0xFF047857)
-            : Theme.of(context).colorScheme.error;
-    final description =
-        change == null
-            ? previousMinor == 0 && currentMinor == 0
-                ? 'Sin valores en ambos meses'
-                : 'Sin valor previo para calcular porcentaje'
+            ? AppColors.deepMint
+            : scheme.error;
+    final status =
+        !hasComparableBase
+            ? currentMinor == 0
+                ? 'Sin movimientos'
+                : 'Nuevo este mes'
             : change == 0
-            ? 'Sin cambio'
+            ? 'Sin cambios'
             : '${change.abs().toStringAsFixed(0)}% ${change > 0 ? 'más' : 'menos'}';
-    return Row(
-      children: [
-        Expanded(
+    final difference = currentMinor - previousMinor;
+    final maxValue = math.max(1, math.max(currentMinor, previousMinor));
+    return Material(
+      color: scheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _showDetails(context),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
-              Text(
-                'Antes ${_money(previousMinor)} · ahora ${_money(currentMinor)}',
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, color: color),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        Text(
+                          _money(currentMinor),
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          !hasComparableBase || change == 0
+                              ? Icons.horizontal_rule_rounded
+                              : change > 0
+                              ? Icons.north_east_rounded
+                              : Icons.south_east_rounded,
+                          size: 15,
+                          color: color,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          status,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _ComparisonMonthBar(
+                label: _monthLabel(previousMonth),
+                amountMinor: previousMinor,
+                maxMinor: maxValue,
+                color: scheme.outline,
+              ),
+              const SizedBox(height: 9),
+              _ComparisonMonthBar(
+                label: _monthLabel(currentMonth),
+                amountMinor: currentMinor,
+                maxMinor: maxValue,
+                color: color,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      difference == 0
+                          ? 'Mismo valor que el mes anterior'
+                          : '${difference > 0 ? '+' : '−'}${_money(difference.abs())} frente al mes anterior',
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        const SizedBox(width: 12),
-        Text(
-          description,
-          textAlign: TextAlign.end,
-          style: TextStyle(color: color, fontWeight: FontWeight.w800),
-        ),
-      ],
+      ),
     );
   }
+
+  void _showDetails(BuildContext context) {
+    final difference = currentMinor - previousMinor;
+    final hasPreviousValue = previousMinor > 0;
+    final direction = difference > 0 ? 'aumentaron' : 'disminuyeron';
+    final explanation =
+        !hasPreviousValue
+            ? currentMinor == 0
+                ? 'No hay $label registrados en ninguno de los dos meses.'
+                : 'En ${_monthLabel(previousMonth)} no registraste $label. En ${_monthLabel(currentMonth)} llevas ${_money(currentMinor)}; por eso mostramos “Nuevo este mes” en lugar de inventar un porcentaje.'
+            : difference == 0
+            ? 'Registraste exactamente el mismo valor en ambos meses.'
+            : 'Tus ${label.toLowerCase()} $direction ${_money(difference.abs())} frente al mes anterior.';
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder:
+          (context) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Detalle de $label',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(explanation),
+                  const SizedBox(height: 18),
+                  _ComparisonDetailAmount(
+                    label: _monthLabel(previousMonth),
+                    value: previousMinor,
+                  ),
+                  const SizedBox(height: 8),
+                  _ComparisonDetailAmount(
+                    label: _monthLabel(currentMonth),
+                    value: currentMinor,
+                    emphasized: true,
+                  ),
+                ],
+              ),
+            ),
+          ),
+    );
+  }
+}
+
+class _ComparisonMonthBar extends StatelessWidget {
+  const _ComparisonMonthBar({
+    required this.label,
+    required this.amountMinor,
+    required this.maxMinor,
+    required this.color,
+  });
+
+  final String label;
+  final int amountMinor;
+  final int maxMinor;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Text(
+            _money(amountMinor),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+      const SizedBox(height: 5),
+      LinearProgressIndicator(
+        value: amountMinor / maxMinor,
+        minHeight: 8,
+        color: color,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+    ],
+  );
+}
+
+class _ComparisonDetailAmount extends StatelessWidget {
+  const _ComparisonDetailAmount({
+    required this.label,
+    required this.value,
+    this.emphasized = false,
+  });
+
+  final String label;
+  final int value;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color:
+          emphasized
+              ? Theme.of(context).colorScheme.primaryContainer
+              : Theme.of(context).colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Row(
+      children: [
+        Expanded(child: Text(label)),
+        Text(
+          _money(value),
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            color: emphasized ? Theme.of(context).colorScheme.primary : null,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _BankTrendChart extends StatelessWidget {
@@ -937,6 +1221,7 @@ class _ExportSheet extends StatefulWidget {
     required this.currentUid,
     required this.currentUserName,
     required this.householdKind,
+    required this.analysisOnly,
   });
 
   final List<FinanceTransaction> transactions;
@@ -944,6 +1229,7 @@ class _ExportSheet extends StatefulWidget {
   final String currentUid;
   final String currentUserName;
   final HouseholdKind householdKind;
+  final bool analysisOnly;
 
   @override
   State<_ExportSheet> createState() => _ExportSheetState();
@@ -1036,8 +1322,10 @@ class _ExportSheetState extends State<_ExportSheet> {
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 5),
-            const Text(
-              'El periodo, el origen y la categoría ya están aplicados. Elige de quién será el reporte.',
+            Text(
+              widget.analysisOnly
+                  ? 'El período, el banco y la categoría ya están aplicados. El archivo incluirá gráficos, análisis y recomendaciones, sin repetir el listado del banco.'
+                  : 'El período, el origen y la categoría ya están aplicados. Elige de quién será el reporte.',
             ),
             const SizedBox(height: 18),
             Card(
@@ -1145,7 +1433,11 @@ class _ExportSheetState extends State<_ExportSheet> {
               selectedCount == 0
                   ? 'No hay movimientos para esta opción con los filtros actuales.'
                   : selectedCount == 1
-                  ? 'Se exportará 1 movimiento.'
+                  ? widget.analysisOnly
+                      ? 'Se analizará 1 movimiento bancario.'
+                      : 'Se exportará 1 movimiento.'
+                  : widget.analysisOnly
+                  ? 'Se analizarán $selectedCount movimientos bancarios.'
                   : 'Se exportarán $selectedCount movimientos.',
               style: TextStyle(
                 color:
@@ -1184,20 +1476,21 @@ class _ExportSheetState extends State<_ExportSheet> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    key: const Key('export_csv'),
-                    onPressed:
-                        selectedCount == 0
-                            ? null
-                            : () => Navigator.pop(
-                              context,
-                              _choice(_ExportFormat.csv),
-                            ),
-                    icon: const Icon(Icons.data_object_outlined),
-                    label: const Text('CSV'),
+                if (!widget.analysisOnly)
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('export_csv'),
+                      onPressed:
+                          selectedCount == 0
+                              ? null
+                              : () => Navigator.pop(
+                                context,
+                                _choice(_ExportFormat.csv),
+                              ),
+                      icon: const Icon(Icons.data_object_outlined),
+                      label: const Text('CSV'),
+                    ),
                   ),
-                ),
               ],
             ),
           ],

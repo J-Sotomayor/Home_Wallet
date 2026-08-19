@@ -9,6 +9,7 @@
     "build": "tsc",
     "test:functions": "npm run build && node --test test/functions.integration.test.cjs",
     "test:rules": "node --test test/firestore.rules.test.cjs",
+    "test:storage": "node --test test/storage.rules.test.cjs",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth,storage",
     "deploy": "firebase deploy --only functions"
   },

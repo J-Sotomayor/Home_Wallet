@@ -9,6 +9,11 @@ import 'transaction_import_rules.dart';
 class TransactionImportIdentity {
   const TransactionImportIdentity();
 
+  Future<String> forFile(List<int> bytes) async {
+    final digest = await Sha256().hash(bytes);
+    return _hex(digest.bytes);
+  }
+
   Future<String> forImported(ImportedTransaction transaction) => _hash(
     description: transaction.description,
     amountMinor: transaction.amountMinor,
@@ -42,8 +47,9 @@ class TransactionImportIdentity {
       TransactionImportRules.normalize(description),
     ].join('|');
     final digest = await Sha256().hash(utf8.encode(canonical));
-    return digest.bytes
-        .map((value) => value.toRadixString(16).padLeft(2, '0'))
-        .join();
+    return _hex(digest.bytes);
   }
+
+  static String _hex(List<int> bytes) =>
+      bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
 }

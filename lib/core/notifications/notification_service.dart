@@ -111,7 +111,7 @@ class NotificationService {
       await _saveToken(uid, token);
       await _tokenSubscription?.cancel();
       _tokenSubscription = _messaging.onTokenRefresh.listen(
-        (value) => _saveToken(uid, value),
+        (value) => unawaited(_saveTokenSafely(uid, value)),
       );
       return true;
     } catch (error) {
@@ -124,7 +124,18 @@ class NotificationService {
 
   Future<void> unregisterUser(String uid) async {
     final token = _currentToken;
-    if (token != null) {
+    if (_currentUid == uid) {
+      try {
+        await _tokenSubscription?.cancel();
+      } on Object catch (error) {
+        debugPrint('No se pudo detener la renovación del token FCM: $error');
+      }
+      _tokenSubscription = null;
+      _currentUid = null;
+      _currentToken = null;
+    }
+    if (token == null) return;
+    try {
       final id = await _tokenId(token);
       await _firestore
           .collection('users')
@@ -132,12 +143,11 @@ class NotificationService {
           .collection('devices')
           .doc(id)
           .delete();
-    }
-    if (_currentUid == uid) {
-      await _tokenSubscription?.cancel();
-      _tokenSubscription = null;
-      _currentUid = null;
-      _currentToken = null;
+    } on Object catch (error) {
+      // El cierre de sesión puede invalidar la autorización mientras se
+      // desmonta la interfaz. La limpieza local siempre debe completarse y un
+      // token obsoleto será retirado por el backend si FCM lo rechaza.
+      debugPrint('No se pudo retirar el token FCM del dispositivo: $error');
     }
   }
 
@@ -317,6 +327,7 @@ class NotificationService {
   }
 
   Future<void> _saveToken(String uid, String token) async {
+    if (_currentUid != uid) return;
     _currentToken = token;
     await _firestore
         .collection('users')
@@ -333,6 +344,16 @@ class NotificationService {
                   : 'android',
           'updatedAt': FieldValue.serverTimestamp(),
         });
+  }
+
+  Future<void> _saveTokenSafely(String uid, String token) async {
+    try {
+      await _saveToken(uid, token);
+    } on Object catch (error) {
+      // Una renovación que coincide con un cierre de sesión no debe convertirse
+      // en una excepción no controlada ni en un evento fatal de Crashlytics.
+      debugPrint('No se pudo renovar el token FCM del dispositivo: $error');
+    }
   }
 
   Future<String> _tokenId(String token) async {

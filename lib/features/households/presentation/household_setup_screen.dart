@@ -68,7 +68,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Center(child: HomeWalletLogo(width: 250, height: 74)),
+                  const Center(child: HomeWalletLogo(width: 220, height: 200)),
                   const SizedBox(height: AppSpacing.xl),
                   Text(
                     'Configura tu espacio',

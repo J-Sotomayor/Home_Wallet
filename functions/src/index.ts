@@ -46,6 +46,9 @@ const db = getFirestore();
 const invitationLifetimeMs = 15 * 60 * 1000;
 const termsVersion = "2026-08-02";
 const householdKeyBackupSecret = defineSecret("HOUSEHOLD_KEY_BACKUP_SECRET");
+const legacyHouseholdKeyBackupSecret = defineSecret(
+  "HOUSEHOLD_KEY_BACKUP_SECRET_LEGACY",
+);
 
 function requireVerifiedUser(request: CallableRequest<unknown>): string {
   const auth = request.auth;
@@ -121,8 +124,16 @@ function requiredHouseholdKey(data: Record<string, unknown>): Buffer {
 }
 
 function keyBackupMasterKey(): Buffer {
+  return decodeBackupMasterKey(householdKeyBackupSecret.value());
+}
+
+function legacyKeyBackupMasterKey(): Buffer {
+  return decodeBackupMasterKey(legacyHouseholdKeyBackupSecret.value());
+}
+
+function decodeBackupMasterKey(value: string): Buffer {
   try {
-    const key = Buffer.from(householdKeyBackupSecret.value(), "base64url");
+    const key = Buffer.from(value, "base64url");
     if (key.length === 32) return key;
   } catch (_) {
     // No exponemos detalles del secreto configurado.
@@ -145,6 +156,14 @@ function verifyHouseholdKey(
   key: Buffer,
   rawPayload: unknown,
 ): void {
+  decryptHouseholdPayload(householdId, key, rawPayload);
+}
+
+function decryptHouseholdPayload(
+  householdId: string,
+  key: Buffer,
+  rawPayload: unknown,
+): Record<string, unknown> {
   const payload = requiredCipherPayload({payload: rawPayload}, "payload");
   try {
     const decipher = createDecipheriv(
@@ -162,12 +181,19 @@ function verifyHouseholdKey(
     if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
       throw new Error("Invalid decrypted household");
     }
+    return decoded as Record<string, unknown>;
   } catch (_) {
     throw new HttpsError(
       "failed-precondition",
       "La clave no corresponde a este espacio.",
     );
   }
+}
+
+function numericInvitationCode(): string {
+  return (randomBytes(4).readUInt32BE(0) % 100_000_000)
+    .toString()
+    .padStart(8, "0");
 }
 
 function wrapHouseholdKey(householdId: string, key: Buffer) {
@@ -191,25 +217,31 @@ function unwrapHouseholdKey(
   if (rawBackup.v !== 1 || rawBackup.alg !== "A256GCM") {
     throw new HttpsError("data-loss", "La copia de recuperación no es válida.");
   }
-  try {
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      keyBackupMasterKey(),
-      decodePayloadPart(rawBackup.iv),
-    );
-    decipher.setAAD(
-      Buffer.from(`household-key-backup/v1/${householdId}`, "utf8"),
-    );
-    decipher.setAuthTag(decodePayloadPart(rawBackup.tag));
-    const key = Buffer.concat([
-      decipher.update(decodePayloadPart(rawBackup.ct)),
-      decipher.final(),
-    ]);
-    if (key.length !== 32) throw new Error("Invalid recovered key");
-    return key;
-  } catch (_) {
-    throw new HttpsError("data-loss", "No se pudo recuperar la clave cifrada.");
+  for (const masterKey of [
+    keyBackupMasterKey(),
+    legacyKeyBackupMasterKey(),
+  ]) {
+    try {
+      const decipher = createDecipheriv(
+        "aes-256-gcm",
+        masterKey,
+        decodePayloadPart(rawBackup.iv),
+      );
+      decipher.setAAD(
+        Buffer.from(`household-key-backup/v1/${householdId}`, "utf8"),
+      );
+      decipher.setAuthTag(decodePayloadPart(rawBackup.tag));
+      const key = Buffer.concat([
+        decipher.update(decodePayloadPart(rawBackup.ct)),
+        decipher.final(),
+      ]);
+      if (key.length !== 32) throw new Error("Invalid recovered key");
+      return key;
+    } catch (_) {
+      // Se prueba la siguiente versión todavía habilitada del secreto.
+    }
   }
+  throw new HttpsError("data-loss", "No se pudo recuperar la clave cifrada.");
 }
 
 async function enforceRateLimit(
@@ -246,6 +278,7 @@ async function sendPushToUsers(
   title: string,
   body: string,
   data: Record<string, string>,
+  excludedTokens: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const uniqueUsers = [...new Set(userIds)].filter(Boolean);
   if (uniqueUsers.length === 0) return;
@@ -255,7 +288,8 @@ async function sendPushToUsers(
   for (const snapshot of deviceSnapshots) {
     for (const device of snapshot.docs) {
       const token = device.data().token;
-      if (typeof token === "string" && token.length > 20) {
+      if (typeof token === "string" && token.length > 20 &&
+          !excludedTokens.has(token)) {
         tokenReferences.set(token, device.ref);
       }
     }
@@ -285,6 +319,26 @@ async function sendPushToUsers(
     await Promise.all(removals);
   }
 }
+
+export const notifyNewAccountDevice = onDocumentCreated(
+  "users/{userId}/devices/{deviceId}",
+  async (event) => {
+    const device = event.data;
+    if (!device) return;
+    const token = device.data().token;
+    if (typeof token !== "string" || token.length <= 20) return;
+    const platform = device.data().platform;
+    const deviceLabel = platform === "ios" ? "iPhone o iPad" :
+      platform === "web" ? "navegador web" : "dispositivo Android";
+    await sendPushToUsers(
+      [event.params.userId],
+      "Nuevo inicio de sesión",
+      `Tu cuenta de HomeWallet se abrió en un ${deviceLabel}.`,
+      {type: "new_account_device"},
+      new Set([token]),
+    );
+  },
+);
 
 async function notifyHousehold(
   householdId: string,
@@ -621,7 +675,7 @@ export const backupHouseholdKey = onCall(
     const data = requestMap(request);
     const householdId = requiredString(data, "householdId", 128);
     const key = requiredHouseholdKey(data);
-    await enforceRateLimit(uid, "backupHouseholdKey", 1_000);
+    await enforceRateLimit(uid, `backupHouseholdKey_${householdId}`, 1_000);
 
     const householdReference = db.collection("households").doc(householdId);
     const memberReference = householdReference.collection("members").doc(uid);
@@ -654,12 +708,12 @@ export const backupHouseholdKey = onCall(
 );
 
 export const recoverHouseholdKey = onCall(
-  {secrets: [householdKeyBackupSecret]},
+  {secrets: [householdKeyBackupSecret, legacyHouseholdKeyBackupSecret]},
   async (request) => {
     const uid = requireVerifiedUser(request);
     const data = requestMap(request);
     const householdId = requiredString(data, "householdId", 128);
-    await enforceRateLimit(uid, "recoverHouseholdKey", 2_000);
+    await enforceRateLimit(uid, `recoverHouseholdKey_${householdId}`, 2_000);
 
     const householdReference = db.collection("households").doc(householdId);
     const [household, member, backup] = await Promise.all([
@@ -684,11 +738,66 @@ export const recoverHouseholdKey = onCall(
     }
     const key = unwrapHouseholdKey(householdId, backup.data()!);
     verifyHouseholdKey(householdId, key, household.data()?.privatePayload);
+    await backup.ref.set({
+      ...wrapHouseholdKey(householdId, key),
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: uid,
+      migratedAt: FieldValue.serverTimestamp(),
+    });
     return {key: key.toString("base64url")};
   },
 );
 
-export const createInvitation = onCall(async (request) => {
+export const recoverUserHouseholdKeys = onCall(
+  {secrets: [householdKeyBackupSecret, legacyHouseholdKeyBackupSecret]},
+  async (request) => {
+    const uid = requireVerifiedUser(request);
+    await enforceRateLimit(uid, "recoverUserHouseholdKeys", 3_000);
+    const user = await db.collection("users").doc(uid).get();
+    const rawIds = user.data()?.householdIds;
+    const householdIds = Array.isArray(rawIds) ?
+      [...new Set(rawIds.filter((value): value is string =>
+        typeof value === "string" && value.length > 0))].slice(0, 100) :
+      [];
+    const recovered: Record<string, string> = {};
+    const batch = db.batch();
+    let migrated = 0;
+    await Promise.all(householdIds.map(async (householdId) => {
+      const householdReference = db.collection("households").doc(householdId);
+      const backupReference = db
+        .collection("internalHouseholdKeyBackups")
+        .doc(householdId);
+      const [household, member, backup] = await Promise.all([
+        householdReference.get(),
+        householdReference.collection("members").doc(uid).get(),
+        backupReference.get(),
+      ]);
+      if (!household.exists ||
+          !member.exists || member.data()?.status !== "active" ||
+          !backup.exists) return;
+      try {
+        const key = unwrapHouseholdKey(householdId, backup.data()!);
+        verifyHouseholdKey(householdId, key, household.data()?.privatePayload);
+        recovered[householdId] = key.toString("base64url");
+        batch.set(backupReference, {
+          ...wrapHouseholdKey(householdId, key),
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: uid,
+          migratedAt: FieldValue.serverTimestamp(),
+        });
+        migrated += 1;
+      } catch (_) {
+        // Un respaldo inválido no impide recuperar los demás espacios.
+      }
+    }));
+    if (migrated > 0) await batch.commit();
+    return {keys: recovered};
+  },
+);
+
+export const createInvitation = onCall(
+  {secrets: [householdKeyBackupSecret, legacyHouseholdKeyBackupSecret]},
+  async (request) => {
   const uid = requireVerifiedUser(request);
   const data = requestMap(request);
   const householdId = requiredString(data, "householdId", 128);
@@ -696,18 +805,28 @@ export const createInvitation = onCall(async (request) => {
   await enforceRateLimit(uid, "createInvitation", 5_000);
 
   const token = randomBytes(32).toString("base64url");
+  const code = numericInvitationCode();
+  const codeHash = hashToken(code);
   const expiresAt = Timestamp.fromMillis(Date.now() + invitationLifetimeMs);
   const householdReference = db.collection("households").doc(householdId);
   const memberReference = householdReference.collection("members").doc(uid);
   // Un único documento por hogar invalida inmediatamente el QR anterior.
   const invitationReference = db.collection("invitations").doc(householdId);
+  const codeReference = db.collection("invitationCodes").doc(codeHash);
+  const backupReference = db
+    .collection("internalHouseholdKeyBackups")
+    .doc(householdId);
   let kind = "family";
   let role = "member";
   await db.runTransaction(async (transaction) => {
-    const [household, member] = await Promise.all([
-      transaction.get(householdReference),
-      transaction.get(memberReference),
-    ]);
+    const [household, member, previousInvitation, existingCode, backup] =
+      await Promise.all([
+        transaction.get(householdReference),
+        transaction.get(memberReference),
+        transaction.get(invitationReference),
+        transaction.get(codeReference),
+        transaction.get(backupReference),
+      ]);
     if (!household.exists) {
       throw new HttpsError("not-found", "El espacio ya no existe.");
     }
@@ -731,10 +850,33 @@ export const createInvitation = onCall(async (request) => {
         "Un espacio Pareja admite como máximo dos integrantes.",
       );
     }
+    if (!backup.exists) {
+      throw new HttpsError(
+        "failed-precondition",
+        "No se pudo verificar la recuperación segura. Intenta generar el código nuevamente.",
+      );
+    }
+    const backedKey = unwrapHouseholdKey(householdId, backup.data()!);
+    verifyHouseholdKey(householdId, backedKey, household.data()?.privatePayload);
     role = kind === "family" ? requestedRole : "member";
+    const existingCodeExpiry = existingCode.data()?.expiresAt as
+      Timestamp | undefined;
+    if (existingCode.exists &&
+        existingCodeExpiry && existingCodeExpiry.toMillis() > Date.now()) {
+      throw new HttpsError(
+        "already-exists",
+        "No se pudo reservar un código único. Genera otra invitación.",
+      );
+    }
+    const previousCodeHash = previousInvitation.data()?.codeHash;
+    if (typeof previousCodeHash === "string" && previousCodeHash !== codeHash) {
+      transaction.delete(db.collection("invitationCodes").doc(previousCodeHash));
+    }
     transaction.set(invitationReference, {
       householdId,
       tokenHash: hashToken(token),
+      token,
+      codeHash,
       createdBy: uid,
       createdAt: FieldValue.serverTimestamp(),
       expiresAt,
@@ -743,17 +885,110 @@ export const createInvitation = onCall(async (request) => {
       usedBy: null,
       usedAt: null,
     });
+    transaction.set(codeReference, {
+      invitationId: invitationReference.id,
+      householdId,
+      expiresAt,
+    });
   });
 
   return {
     invitationId: invitationReference.id,
     householdId,
     token,
+    code,
     expiresAt: expiresAt.toMillis(),
     kind,
     role,
   };
-});
+  },
+);
+
+export const resolveInvitationCode = onCall(
+  {secrets: [householdKeyBackupSecret, legacyHouseholdKeyBackupSecret]},
+  async (request) => {
+    const uid = requireVerifiedUser(request);
+    const data = requestMap(request);
+    const code = requiredString(data, "code", 8);
+    if (!/^\d{8}$/.test(code)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Ingresa los 8 números del código.",
+      );
+    }
+    await enforceRateLimit(uid, "resolveInvitationCode", 1_500);
+
+    const codeHash = hashToken(code);
+    const codeSnapshot = await db.collection("invitationCodes").doc(codeHash).get();
+    if (!codeSnapshot.exists) {
+      throw new HttpsError(
+        "not-found",
+        "El código no existe o ya dejó de estar disponible.",
+      );
+    }
+    const codeData = codeSnapshot.data()!;
+    const invitationId = codeData.invitationId;
+    if (typeof invitationId !== "string") {
+      throw new HttpsError("data-loss", "La invitación está incompleta.");
+    }
+    const invitationReference = db.collection("invitations").doc(invitationId);
+    const invitationSnapshot = await invitationReference.get();
+    if (!invitationSnapshot.exists) {
+      throw new HttpsError("not-found", "La invitación ya no existe.");
+    }
+    const invitation = invitationSnapshot.data()!;
+    if (invitation.codeHash !== codeHash) {
+      throw new HttpsError("permission-denied", "El código no es válido.");
+    }
+    if (invitation.status === "revoked") {
+      throw new HttpsError(
+        "failed-precondition",
+        "La invitación fue revocada. Solicita una nueva.",
+      );
+    }
+    if (invitation.status !== "active" || invitation.usedBy !== null) {
+      throw new HttpsError("already-exists", "La invitación ya fue utilizada.");
+    }
+    const expiresAt = invitation.expiresAt as Timestamp;
+    if (expiresAt.toMillis() <= Date.now()) {
+      throw new HttpsError("deadline-exceeded", "La invitación venció.");
+    }
+
+    const householdId = invitation.householdId as string;
+    const householdReference = db.collection("households").doc(householdId);
+    const [household, backup] = await Promise.all([
+      householdReference.get(),
+      db.collection("internalHouseholdKeyBackups").doc(householdId).get(),
+    ]);
+    if (!household.exists) {
+      throw new HttpsError("not-found", "El espacio ya no existe.");
+    }
+    if (!backup.exists) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Este espacio todavía no tiene recuperación segura. Genera nuevamente la invitación desde el dispositivo principal.",
+      );
+    }
+    const key = unwrapHouseholdKey(householdId, backup.data()!);
+    const clear = decryptHouseholdPayload(
+      householdId,
+      key,
+      household.data()?.privatePayload,
+    );
+    const kind = household.data()?.kind ?? "family";
+    const name = typeof clear.name === "string" ? clear.name : "Espacio compartido";
+    return {
+      householdId,
+      invitationId,
+      token: invitation.token,
+      key: key.toString("base64url"),
+      expiresAt: expiresAt.toMillis(),
+      kind,
+      role: invitation.role === "junior" ? "junior" : "member",
+      name,
+    };
+  },
+);
 
 export const revokeInvitation = onCall(async (request) => {
   const uid = requireVerifiedUser(request);
@@ -781,6 +1016,10 @@ export const revokeInvitation = onCall(async (request) => {
       );
     }
     if (!invitation.exists || invitation.data()?.status !== "active") return;
+    const codeHash = invitation.data()?.codeHash;
+    if (typeof codeHash === "string") {
+      transaction.delete(db.collection("invitationCodes").doc(codeHash));
+    }
     transaction.update(invitationReference, {
       status: "revoked",
       revokedBy: uid,
@@ -882,6 +1121,10 @@ export const acceptInvitation = onCall(async (request) => {
       usedBy: uid,
       usedAt: FieldValue.serverTimestamp(),
     });
+    const codeHash = invitation.codeHash;
+    if (typeof codeHash === "string") {
+      transaction.delete(db.collection("invitationCodes").doc(codeHash));
+    }
   });
 
   await notifyHousehold(

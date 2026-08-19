@@ -40,12 +40,14 @@ class HomeShell extends StatefulWidget {
     required this.householdId,
     required this.services,
     required this.themeController,
+    required this.onSignOut,
   });
 
   final AuthUser user;
   final String householdId;
   final AppServices services;
   final ThemeController themeController;
+  final Future<void> Function() onSignOut;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -53,22 +55,20 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  _MovementView _movementView = _MovementView.app;
   bool _tutorialQueued = false;
+  bool _hasOpenContentRoute = false;
   final _transactionsKey = GlobalKey<_TransactionsTabState>();
+  final _contentNavigatorKey = GlobalKey<NavigatorState>();
+  late final NavigatorObserver _contentNavigatorObserver;
 
   @override
   void initState() {
     super.initState();
+    _contentNavigatorObserver = _HomeContentNavigatorObserver(
+      _setContentRouteOpen,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _startExperience());
-  }
-
-  @override
-  void dispose() {
-    final notifications = widget.services.notifications;
-    if (notifications != null) {
-      unawaited(notifications.unregisterUser(widget.user.uid));
-    }
-    super.dispose();
   }
 
   @override
@@ -98,9 +98,9 @@ class _HomeShellState extends State<HomeShell> {
             services: widget.services,
             onImportCompleted: _showImportedTransactions,
             onImportCommitted: () => unawaited(_evaluateSmartAlerts()),
-            onOpenTransactions: () => setState(() => _index = 1),
-            onOpenPlans: () => setState(() => _index = 4),
-            onOpenSavings: () => setState(() => _index = 3),
+            onOpenTransactions: () => _selectDestination(1),
+            onOpenPlans: () => _selectDestination(4),
+            onOpenSavings: () => _selectDestination(3),
             onOpenProfile: () => _openSettings(household),
             canContribute: canContribute,
             isCollaborative: household.isCollaborative,
@@ -113,6 +113,11 @@ class _HomeShellState extends State<HomeShell> {
             canContribute: canContribute,
             canManage: household.canManage,
             isCollaborative: household.isCollaborative,
+            onViewChanged: (view) {
+              if (_movementView != view) {
+                setState(() => _movementView = view);
+              }
+            },
             onEdit:
                 (transaction) => _showTransactionForm(
                   context,
@@ -140,7 +145,7 @@ class _HomeShellState extends State<HomeShell> {
                   initialType: TransactionType.saving,
                   isCollaborative: household.isCollaborative,
                 ),
-            onOpenPlans: () => setState(() => _index = 4),
+            onOpenPlans: () => _selectDestination(4),
           ),
           _PlansTab(
             user: widget.user,
@@ -166,23 +171,43 @@ class _HomeShellState extends State<HomeShell> {
         ];
 
         return Scaffold(
-          body: IndexedStack(index: _index, children: pages),
+          body: Navigator(
+            key: _contentNavigatorKey,
+            observers: [_contentNavigatorObserver],
+            pages: [
+              MaterialPage<void>(
+                key: const ValueKey('home_content_root'),
+                child: IndexedStack(index: _index, children: pages),
+              ),
+            ],
+            onDidRemovePage: (_) {},
+          ),
           floatingActionButton:
-              canContribute && _index == 1
+              canContribute && _index == 1 && !_hasOpenContentRoute
                   ? FloatingActionButton.extended(
                     onPressed:
-                        () => _showTransactionForm(
-                          context,
-                          isCollaborative: household.isCollaborative,
-                        ),
-                    icon: const Icon(Icons.add_circle_outline),
-                    label: const Text('Registrar'),
+                        _movementView == _MovementView.bank
+                            ? _openBankImport
+                            : () => _showTransactionForm(
+                              context,
+                              isCollaborative: household.isCollaborative,
+                            ),
+                    icon: Icon(
+                      _movementView == _MovementView.bank
+                          ? Icons.upload_file_outlined
+                          : Icons.add_circle_outline,
+                    ),
+                    label: Text(
+                      _movementView == _MovementView.bank
+                          ? 'Importar estado'
+                          : 'Registrar',
+                    ),
                   )
                   : null,
           bottomNavigationBar: NavigationBar(
             labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
             selectedIndex: _index,
-            onDestinationSelected: (value) => setState(() => _index = value),
+            onDestinationSelected: _selectDestination,
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),
@@ -214,6 +239,16 @@ class _HomeShellState extends State<HomeShell> {
         );
       },
     );
+  }
+
+  void _selectDestination(int value) {
+    _contentNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+    if (_index != value) setState(() => _index = value);
+  }
+
+  void _setContentRouteOpen(bool value) {
+    if (!mounted || _hasOpenContentRoute == value) return;
+    setState(() => _hasOpenContentRoute = value);
   }
 
   Future<void> _showTransactionForm(
@@ -318,11 +353,6 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _startExperience() async {
     await _showTutorialOnce();
-    if (!mounted) return;
-    final notifications = widget.services.notifications;
-    if (notifications != null) {
-      await notifications.registerUser(widget.user.uid);
-    }
   }
 
   Future<void> _evaluateSmartAlerts() async {
@@ -348,7 +378,7 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   void _openSettings(Household household) {
-    Navigator.of(context).push(
+    _contentNavigatorKey.currentState?.push(
       MaterialPageRoute<void>(
         builder:
             (_) => Scaffold(
@@ -359,6 +389,7 @@ class _HomeShellState extends State<HomeShell> {
                 services: widget.services,
                 themeController: widget.themeController,
                 household: household,
+                onSignOut: widget.onSignOut,
               ),
             ),
       ),
@@ -366,10 +397,25 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   void _showImportedTransactions() {
-    setState(() => _index = 1);
+    _selectDestination(1);
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _transactionsKey.currentState?.showImportedOnly(),
     );
+  }
+
+  Future<void> _openBankImport() async {
+    final imported = await _contentNavigatorKey.currentState?.push<bool>(
+      MaterialPageRoute<bool>(
+        builder:
+            (_) => DataToolsScreen(
+              user: widget.user,
+              householdId: widget.householdId,
+              services: widget.services,
+              onImportCommitted: () => unawaited(_evaluateSmartAlerts()),
+            ),
+      ),
+    );
+    if (imported == true) _showImportedTransactions();
   }
 
   void _showMessage(String message) {
@@ -377,6 +423,36 @@ class _HomeShellState extends State<HomeShell> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _HomeContentNavigatorObserver extends NavigatorObserver {
+  _HomeContentNavigatorObserver(this.onRouteStateChanged);
+
+  final ValueChanged<bool> onRouteStateChanged;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    onRouteStateChanged(previousRoute != null);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPop(route, previousRoute);
+    onRouteStateChanged(previousRoute != null && !previousRoute.isFirst);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didRemove(route, previousRoute);
+    onRouteStateChanged(previousRoute != null && !previousRoute.isFirst);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    onRouteStateChanged(newRoute != null && !newRoute.isFirst);
   }
 }
 
@@ -526,6 +602,12 @@ class _DashboardTab extends StatelessWidget {
                                   ),
                                 ],
                                 const SizedBox(height: 14),
+                                _DashboardPlansSnapshot(
+                                  plans: plans,
+                                  transactions: transactions,
+                                  onOpenPlans: onOpenPlans,
+                                ),
+                                const SizedBox(height: 14),
                                 _HomeEssentialActions(
                                   canContribute: household.canContribute,
                                   canInvite: household.canInvite,
@@ -549,12 +631,6 @@ class _DashboardTab extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 14),
                                 FinanceInsights(transactions: transactions),
-                                const SizedBox(height: 14),
-                                _DashboardPlansSnapshot(
-                                  plans: plans,
-                                  transactions: transactions,
-                                  onOpenPlans: onOpenPlans,
-                                ),
                                 const SizedBox(height: 24),
                                 Row(
                                   children: [
@@ -584,7 +660,9 @@ class _DashboardTab extends StatelessWidget {
                                     icon: Icons.history_toggle_off_outlined,
                                     title: 'Aún no hay actividad',
                                     description:
-                                        'Aquí verás acciones importantes, como programaciones, divisiones e importaciones.',
+                                        household.isCollaborative
+                                            ? 'Aquí verás acciones importantes, como programaciones, divisiones e importaciones.'
+                                            : 'Aquí verás acciones importantes, como programaciones e importaciones.',
                                   )
                                 else
                                   ...activities
@@ -942,7 +1020,7 @@ class _AvailableBalanceWithMembers extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Escribe el valor neto que realmente recibes al mes. Si tienes varias fuentes, registra su total mensual.',
+                  'Escribe el valor neto que realmente recibes al mes. Se usa como referencia para dividir gastos proporcionalmente; no crea un movimiento de ingreso ni aumenta tu disponible.',
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -1280,6 +1358,11 @@ class _MonthlyIncomePanel extends StatelessWidget {
               ),
             ),
           ),
+        const SizedBox(height: 8),
+        const Text(
+          'Referencia para repartir gastos; se suma al disponible solo cuando registras un ingreso.',
+          style: TextStyle(color: Colors.white70, fontSize: 11),
+        ),
       ],
     ),
   );
@@ -1707,7 +1790,7 @@ class _DashboardPlansSnapshot extends StatelessWidget {
                 const Text(
                   'Aún no hay planes activos. Crea un presupuesto o una meta para seguir su avance aquí.',
                 )
-              else
+              else ...[
                 ...active.map(
                   (plan) => _DashboardPlanProgress(
                     plan: plan,
@@ -1718,6 +1801,11 @@ class _DashboardPlansSnapshot extends StatelessWidget {
                     ),
                   ),
                 ),
+                Text(
+                  'Los presupuestos no agregan saldo; las metas avanzan cuando les asignas aportes.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ],
           ),
         ),
@@ -1789,6 +1877,7 @@ class _TransactionsTab extends StatefulWidget {
     required this.canContribute,
     required this.canManage,
     required this.isCollaborative,
+    required this.onViewChanged,
     required this.onEdit,
   });
 
@@ -1798,6 +1887,7 @@ class _TransactionsTab extends StatefulWidget {
   final bool canContribute;
   final bool canManage;
   final bool isCollaborative;
+  final ValueChanged<_MovementView> onViewChanged;
   final ValueChanged<FinanceTransaction> onEdit;
 
   @override
@@ -1806,6 +1896,7 @@ class _TransactionsTab extends StatefulWidget {
 
 class _TransactionsTabState extends State<_TransactionsTab> {
   static const _firstLaunchKey = 'homewallet.first_launch_at.v1';
+  static const _pageSize = 30;
   final _searchController = TextEditingController();
   _MovementView _view = _MovementView.app;
   TransactionType? _filter;
@@ -1814,6 +1905,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   String? _createdBy;
   DateTime _appHistoryStart = DateTime.now();
   bool _showAdvanced = false;
+  int _visibleLimit = _pageSize;
 
   @override
   void initState() {
@@ -1830,7 +1922,9 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   }
 
   void _refresh() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() => _visibleLimit = _pageSize);
+    }
   }
 
   void showImportedOnly() {
@@ -1843,7 +1937,9 @@ class _TransactionsTabState extends State<_TransactionsTab> {
       _createdBy = null;
       _view = _MovementView.bank;
       _showAdvanced = true;
+      _visibleLimit = _pageSize;
     });
+    widget.onViewChanged(_MovementView.bank);
   }
 
   Future<void> _loadAppHistoryStart() async {
@@ -1862,7 +1958,10 @@ class _TransactionsTabState extends State<_TransactionsTab> {
       _view = view;
       _dateRange = null;
       _category = null;
+      _filter = null;
+      _visibleLimit = _pageSize;
     });
+    widget.onViewChanged(view);
   }
 
   @override
@@ -2007,32 +2106,40 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                           ChoiceChip(
                             label: const Text('Todos'),
                             selected: _filter == null,
-                            onSelected: (_) => setState(() => _filter = null),
+                            onSelected:
+                                (_) => setState(() {
+                                  _filter = null;
+                                  _visibleLimit = _pageSize;
+                                }),
                           ),
                           ChoiceChip(
                             label: const Text('Ingresos'),
                             selected: _filter == TransactionType.income,
                             onSelected:
-                                (_) => setState(
-                                  () => _filter = TransactionType.income,
-                                ),
+                                (_) => setState(() {
+                                  _filter = TransactionType.income;
+                                  _visibleLimit = _pageSize;
+                                }),
                           ),
                           ChoiceChip(
                             label: const Text('Gastos'),
                             selected: _filter == TransactionType.expense,
                             onSelected:
-                                (_) => setState(
-                                  () => _filter = TransactionType.expense,
-                                ),
+                                (_) => setState(() {
+                                  _filter = TransactionType.expense;
+                                  _visibleLimit = _pageSize;
+                                }),
                           ),
-                          ChoiceChip(
-                            label: const Text('Ahorros'),
-                            selected: _filter == TransactionType.saving,
-                            onSelected:
-                                (_) => setState(
-                                  () => _filter = TransactionType.saving,
-                                ),
-                          ),
+                          if (_view == _MovementView.app)
+                            ChoiceChip(
+                              label: const Text('Ahorros'),
+                              selected: _filter == TransactionType.saving,
+                              onSelected:
+                                  (_) => setState(() {
+                                    _filter = TransactionType.saving;
+                                    _visibleLimit = _pageSize;
+                                  }),
+                            ),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -2079,8 +2186,10 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                                     ),
                                   ],
                                   onChanged:
-                                      (value) =>
-                                          setState(() => _category = value),
+                                      (value) => setState(() {
+                                        _category = value;
+                                        _visibleLimit = _pageSize;
+                                      }),
                                 ),
                                 const SizedBox(height: 10),
                                 if (widget.isCollaborative) ...[
@@ -2107,8 +2216,10 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                                       ),
                                     ],
                                     onChanged:
-                                        (value) =>
-                                            setState(() => _createdBy = value),
+                                        (value) => setState(() {
+                                          _createdBy = value;
+                                          _visibleLimit = _pageSize;
+                                        }),
                                   ),
                                   const SizedBox(height: 10),
                                 ],
@@ -2155,7 +2266,10 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                         ),
                       ],
                       const SizedBox(height: 18),
-                      _MovementResultSummary(transactions: visible),
+                      _MovementResultSummary(
+                        transactions: visible,
+                        showSavings: _view == _MovementView.app,
+                      ),
                       const SizedBox(height: 14),
                       if (visible.isEmpty)
                         const _EmptyState(
@@ -2165,7 +2279,28 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                               'No existen movimientos para este filtro.',
                         )
                       else
-                        ..._buildMovementGroups(visible, members),
+                        ..._buildMovementGroups(
+                          visible.take(_visibleLimit).toList(),
+                          members,
+                        ),
+                      if (visible.length > _visibleLimit) ...[
+                        const SizedBox(height: 14),
+                        OutlinedButton.icon(
+                          key: const Key('load_more_transactions'),
+                          onPressed:
+                              () => setState(() => _visibleLimit += _pageSize),
+                          icon: const Icon(Icons.expand_more),
+                          label: Text(
+                            'Ver ${math.min(_pageSize, visible.length - _visibleLimit)} movimientos más',
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Mostrando $_visibleLimit de ${visible.length}',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                     ],
                   );
                 },
@@ -2273,7 +2408,12 @@ class _TransactionsTabState extends State<_TransactionsTab> {
               ? 'Período disponible en el archivo bancario'
               : 'Movimientos desde que instalaste HomeWallet',
     );
-    if (range != null && mounted) setState(() => _dateRange = range);
+    if (range != null && mounted) {
+      setState(() {
+        _dateRange = range;
+        _visibleLimit = _pageSize;
+      });
+    }
   }
 
   void _clearAdvancedFilters() {
@@ -2281,6 +2421,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
       _dateRange = null;
       _category = null;
       _createdBy = null;
+      _visibleLimit = _pageSize;
     });
   }
 
@@ -2408,9 +2549,13 @@ class _TransactionsTabState extends State<_TransactionsTab> {
 }
 
 class _MovementResultSummary extends StatelessWidget {
-  const _MovementResultSummary({required this.transactions});
+  const _MovementResultSummary({
+    required this.transactions,
+    required this.showSavings,
+  });
 
   final List<FinanceTransaction> transactions;
+  final bool showSavings;
 
   @override
   Widget build(BuildContext context) {
@@ -2459,20 +2604,28 @@ class _MovementResultSummary extends StatelessWidget {
                     color: scheme.error,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _MovementResultValue(
-                    label: 'Ahorros',
-                    value: savings,
-                    color: scheme.primary,
+                if (showSavings) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _MovementResultValue(
+                      label: 'Ahorros',
+                      value: savings,
+                      color: scheme.primary,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
             const Divider(height: 22),
             Row(
               children: [
-                const Expanded(child: Text('Flujo (ingresos − gastos)')),
+                Expanded(
+                  child: Text(
+                    showSavings
+                        ? 'Flujo (ingresos − gastos)'
+                        : 'Balance del estado de cuenta',
+                  ),
+                ),
                 Text(
                   _money(flow),
                   style: TextStyle(
@@ -3558,6 +3711,7 @@ class _ProfileTab extends StatefulWidget {
     required this.services,
     required this.themeController,
     required this.household,
+    required this.onSignOut,
   });
 
   final AuthUser user;
@@ -3565,6 +3719,7 @@ class _ProfileTab extends StatefulWidget {
   final AppServices services;
   final ThemeController themeController;
   final Household household;
+  final Future<void> Function() onSignOut;
 
   @override
   State<_ProfileTab> createState() => _ProfileTabState();
@@ -3877,7 +4032,7 @@ class _ProfileTabState extends State<_ProfileTab> {
               ),
               const SizedBox(height: 20),
               Text(
-                'HomeWallet 1.0.7 · Firebase Blaze',
+                'HomeWallet 1.0.16 · Firebase Blaze',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
@@ -3892,7 +4047,7 @@ class _ProfileTabState extends State<_ProfileTab> {
     if (_signingOut) return;
     setState(() => _signingOut = true);
     try {
-      await widget.services.auth.signOut();
+      await widget.onSignOut();
       if (!mounted) return;
       Navigator.of(
         context,
@@ -5559,9 +5714,9 @@ class _TransactionTile extends StatelessWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final color =
         income
-            ? (dark ? const Color(0xFF6EE7B7) : const Color(0xFF047857))
+            ? (dark ? AppColors.mint : AppColors.deepMint)
             : saving
-            ? scheme.primary
+            ? scheme.secondary
             : scheme.error;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 5),

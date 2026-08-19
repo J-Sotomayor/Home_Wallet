@@ -10,6 +10,8 @@ class InvitationPayload {
     required this.keyBytes,
     required this.expiresAt,
     this.kind = HouseholdKind.family,
+    this.role = HouseholdRole.member,
+    this.shortCode,
   });
 
   factory InvitationPayload.decode(String raw) {
@@ -57,6 +59,7 @@ class InvitationPayload {
       keyBytes: keyBytes,
       expiresAt: DateTime.fromMillisecondsSinceEpoch(expiryMillis, isUtc: true),
       kind: HouseholdKind.parse(json['g']),
+      role: HouseholdRole.parse(json['r']),
     );
   }
 
@@ -66,6 +69,8 @@ class InvitationPayload {
   final List<int> keyBytes;
   final DateTime expiresAt;
   final HouseholdKind kind;
+  final HouseholdRole role;
+  final String? shortCode;
 
   bool get isExpired => DateTime.now().toUtc().isAfter(expiresAt);
 
@@ -78,6 +83,7 @@ class InvitationPayload {
       'k': base64UrlEncode(keyBytes).replaceAll('=', ''),
       'e': expiresAt.toUtc().millisecondsSinceEpoch,
       'g': kind.name,
+      'r': role.name,
     });
     return 'HW1.${base64UrlEncode(utf8.encode(content)).replaceAll('=', '')}';
   }
@@ -86,4 +92,16 @@ class InvitationPayload {
       value.length >= 8 &&
       value.length <= 128 &&
       RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value);
+}
+
+class HouseholdInvitationPreview {
+  const HouseholdInvitationPreview({
+    required this.payload,
+    required this.householdName,
+    required this.role,
+  });
+
+  final InvitationPayload payload;
+  final String householdName;
+  final HouseholdRole role;
 }

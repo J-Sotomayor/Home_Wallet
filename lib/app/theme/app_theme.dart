@@ -8,22 +8,22 @@ abstract final class AppTheme {
   static const lightColorScheme = ColorScheme(
     brightness: Brightness.light,
     primary: AppColors.primaryBlue,
-    onPrimary: AppColors.white,
+    onPrimary: AppColors.ink,
     primaryContainer: AppColors.blueContainer,
     onPrimaryContainer: AppColors.primaryBlueDark,
-    secondary: AppColors.savingsGreen,
-    onSecondary: AppColors.darkGray,
-    secondaryContainer: AppColors.successContainer,
-    onSecondaryContainer: AppColors.accessibleGreen,
-    tertiary: AppColors.blushPink,
-    onTertiary: AppColors.darkGray,
-    tertiaryContainer: AppColors.pinkContainer,
-    onTertiaryContainer: AppColors.blushPinkDark,
+    secondary: AppColors.lavender,
+    onSecondary: AppColors.ink,
+    secondaryContainer: AppColors.paleLavender,
+    onSecondaryContainer: AppColors.deepLavender,
+    tertiary: AppColors.peach,
+    onTertiary: AppColors.ink,
+    tertiaryContainer: AppColors.coral,
+    onTertiaryContainer: AppColors.ink,
     error: AppColors.expenseRed,
     onError: AppColors.white,
     errorContainer: AppColors.errorContainer,
     onErrorContainer: AppColors.expenseRed,
-    surface: AppColors.white,
+    surface: AppColors.offWhite,
     onSurface: AppColors.darkGray,
     surfaceContainerHighest: AppColors.lightGray,
     onSurfaceVariant: AppColors.mediumGray,
@@ -31,8 +31,8 @@ abstract final class AppTheme {
     outlineVariant: AppColors.borderGray,
     shadow: AppColors.darkGray,
     scrim: AppColors.darkGray,
-    inverseSurface: AppColors.darkGray,
-    onInverseSurface: AppColors.white,
+    inverseSurface: AppColors.ink,
+    onInverseSurface: AppColors.offWhite,
     inversePrimary: AppColors.darkPrimary,
     surfaceTint: AppColors.primaryBlue,
   );
@@ -40,36 +40,36 @@ abstract final class AppTheme {
   static const darkColorScheme = ColorScheme(
     brightness: Brightness.dark,
     primary: AppColors.darkPrimary,
-    onPrimary: AppColors.darkBackground,
-    primaryContainer: AppColors.primaryBlueDark,
-    onPrimaryContainer: AppColors.darkTextPrimary,
-    secondary: AppColors.darkSavingsGreen,
-    onSecondary: AppColors.darkBackground,
-    secondaryContainer: AppColors.accessibleGreen,
+    onPrimary: AppColors.ink,
+    primaryContainer: AppColors.deepMint,
+    onPrimaryContainer: AppColors.offWhite,
+    secondary: AppColors.darkBlushPink,
+    onSecondary: AppColors.ink,
+    secondaryContainer: AppColors.deepLavender,
     onSecondaryContainer: AppColors.darkTextPrimary,
-    tertiary: AppColors.darkBlushPink,
-    onTertiary: AppColors.darkBackground,
-    tertiaryContainer: AppColors.blushPinkDark,
-    onTertiaryContainer: AppColors.darkTextPrimary,
+    tertiary: AppColors.peach,
+    onTertiary: AppColors.ink,
+    tertiaryContainer: AppColors.deepCoral,
+    onTertiaryContainer: AppColors.offWhite,
     error: AppColors.darkError,
     onError: AppColors.darkBackground,
-    errorContainer: AppColors.expenseRed,
-    onErrorContainer: AppColors.darkTextPrimary,
+    errorContainer: AppColors.deepCoral,
+    onErrorContainer: AppColors.offWhite,
     surface: AppColors.darkSurface,
     onSurface: AppColors.darkTextPrimary,
     surfaceContainerHighest: AppColors.darkElevatedSurface,
     onSurfaceVariant: AppColors.darkTextSecondary,
-    outline: AppColors.mediumGray,
-    outlineVariant: AppColors.darkElevatedSurface,
+    outline: AppColors.neutralGray,
+    outlineVariant: AppColors.ink,
     shadow: AppColors.darkBackground,
     scrim: AppColors.darkBackground,
     inverseSurface: AppColors.darkTextPrimary,
     onInverseSurface: AppColors.darkGray,
-    inversePrimary: AppColors.primaryBlueDark,
+    inversePrimary: AppColors.deepMint,
     surfaceTint: AppColors.darkPrimary,
   );
 
-  static ThemeData get light => _build(lightColorScheme, AppColors.lightGray);
+  static ThemeData get light => _build(lightColorScheme, AppColors.cream);
   static ThemeData get dark =>
       _build(darkColorScheme, AppColors.darkBackground);
 
@@ -77,6 +77,7 @@ abstract final class AppTheme {
     final isLight = scheme.brightness == Brightness.light;
     return ThemeData(
       useMaterial3: true,
+      fontFamily: 'Roboto',
       colorScheme: scheme,
       scaffoldBackgroundColor: scaffoldBackground,
       textTheme: AppTypography.textTheme(scheme.brightness),
@@ -87,7 +88,7 @@ abstract final class AppTheme {
         centerTitle: false,
       ),
       cardTheme: CardThemeData(
-        color: isLight ? scheme.surface : scheme.surfaceContainerHighest,
+        color: isLight ? scheme.surface : AppColors.darkElevatedSurface,
         elevation: 0,
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
@@ -200,6 +201,39 @@ abstract final class AppTheme {
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: scheme.primary,
         foregroundColor: scheme.onPrimary,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected)
+                  ? scheme.onPrimary
+                  : scheme.onSurfaceVariant,
+        ),
+        trackColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected)
+                  ? scheme.primary
+                  : scheme.surfaceContainerHighest,
+        ),
+      ),
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected)
+                  ? scheme.primary
+                  : AppColors.transparent,
+        ),
+        checkColor: WidgetStatePropertyAll(scheme.onPrimary),
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: scheme.primary,
+        linearTrackColor: scheme.surfaceContainerHighest,
+        circularTrackColor: scheme.surfaceContainerHighest,
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: scheme.primary,
+        selectionColor: scheme.primary.withValues(alpha: .28),
+        selectionHandleColor: scheme.primary,
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,

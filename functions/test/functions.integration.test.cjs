@@ -37,12 +37,13 @@ const functions = getFunctions(clientApp, "southamerica-west1");
 connectFunctionsEmulator(functions, "127.0.0.1", 5001);
 
 let sequence = 0;
+const runId = `${Date.now()}-${process.pid}`;
 
 async function verifiedUser(label) {
   sequence += 1;
   const credential = await createUserWithEmailAndPassword(
     auth,
-    `${label}-${sequence}@example.test`,
+    `${label}-${runId}-${sequence}@example.test`,
     "HomeWallet1234",
   );
   await adminAuth.updateUser(credential.user.uid, {emailVerified: true});
@@ -120,6 +121,19 @@ function encryptedHouseholdPayload(householdId, key) {
   };
 }
 
+async function createRecoverableSpace(user, kind) {
+  const householdId = await createSpace(user, kind);
+  const key = randomBytes(32);
+  await db.collection("households").doc(householdId).update({
+    privatePayload: encryptedHouseholdPayload(householdId, key),
+  });
+  await callAs(user, "backupHouseholdKey", {
+    householdId,
+    key: key.toString("base64url"),
+  });
+  return householdId;
+}
+
 after(async () => {
   await deleteClientApp(clientApp);
   await deleteAdminApp(adminApp);
@@ -147,7 +161,7 @@ test("the inviter fixes the Family role and can explicitly revoke the invitation
   const owner = await verifiedUser("family-owner");
   const junior = await verifiedUser("family-junior");
   const revokedCandidate = await verifiedUser("family-revoked");
-  const familyId = await createSpace(owner, "family");
+  const familyId = await createRecoverableSpace(owner, "family");
   const invitation = await callAs(owner, "createInvitation", {
     householdId: familyId,
     role: "junior",
@@ -198,7 +212,7 @@ test("concurrent acceptance cannot add a third person to Pareja", async () => {
   const owner = await verifiedUser("couple-owner");
   const firstCandidate = await verifiedUser("couple-first");
   const secondCandidate = await verifiedUser("couple-second");
-  const coupleId = await createSpace(owner, "couple");
+  const coupleId = await createRecoverableSpace(owner, "couple");
   const invitation = await callAs(owner, "createInvitation", {
     householdId: coupleId,
     role: "member",
@@ -243,7 +257,7 @@ test("joining a shared space preserves all previous memberships", async () => {
   const owner = await verifiedUser("group-owner");
   const guest = await verifiedUser("group-guest");
   const guestIndividualId = await createSpace(guest, "individual");
-  const groupId = await createSpace(owner, "group");
+  const groupId = await createRecoverableSpace(owner, "group");
   const invitation = await callAs(owner, "createInvitation", {
     householdId: groupId,
     role: "member",

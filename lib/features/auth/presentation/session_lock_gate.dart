@@ -76,7 +76,7 @@ class _SessionLockGateState extends State<SessionLockGate>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const HomeWalletLogo(width: 250, height: 74),
+                  const HomeWalletLogo(width: 220, height: 200),
                   const SizedBox(height: 36),
                   Icon(
                     Icons.fingerprint,

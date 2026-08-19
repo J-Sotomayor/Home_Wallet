@@ -40,8 +40,12 @@ migrate_working_dir/
 /coverage/
 /tmp/
 /.tmp/
+/.artifacts/
 /website/
 /dist/
+
+# Accidental local shell snippets
+/light
 
 # Tests are part of the application and must remain versioned.
 /tool/*thesis*

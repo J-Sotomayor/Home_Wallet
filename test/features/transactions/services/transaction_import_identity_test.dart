@@ -53,4 +53,13 @@ void main() {
       isNot(await identity.forImported(second)),
     );
   });
+
+  test('identifies the exact same imported file', () async {
+    final first = await identity.forFile([1, 2, 3, 4]);
+    final repeated = await identity.forFile([1, 2, 3, 4]);
+    final different = await identity.forFile([1, 2, 3, 5]);
+
+    expect(repeated, first);
+    expect(different, isNot(first));
+  });
 }

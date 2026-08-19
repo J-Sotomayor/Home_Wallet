@@ -1,41 +1,60 @@
 import 'package:flutter/material.dart';
 
 abstract final class AppColors {
-  // Official light identity.
-  static const primaryBlue = Color(0xFF2563EB);
-  static const primaryBlueDark = Color(0xFF1D4ED8);
-  static const savingsGreen = Color(0xFF10B981);
-  static const accessibleGreen = Color(0xFF047857);
-  static const white = Color(0xFFFFFFFF);
-  static const darkGray = Color(0xFF1F2937);
-  static const mediumGray = Color(0xFF4B5563);
-  static const lightGray = Color(0xFFF3F4F6);
-  static const borderGray = Color(0xFFD1D5DB);
-  static const blushPink = Color(0xFFE8B4BC);
-  static const blushPinkLight = Color(0xFFFCE7EB);
-  static const blushPinkDark = Color(0xFF9F5865);
-  static const expenseRed = Color(0xFFDC2626);
-  static const warningAmber = Color(0xFFD97706);
-  static const successContainer = Color(0xFFD1FAE5);
-  static const errorContainer = Color(0xFFFEE2E2);
-  static const warningContainer = Color(0xFFFEF3C7);
-  static const blueContainer = Color(0xFFDBEAFE);
-  static const pinkContainer = Color(0xFFFCE7EB);
+  // Paleta oficial HomeWallet de las referencias de marca.
+  static const mint = Color(0xFF8FC9C2);
+  static const paleMint = Color(0xFFDDEFEA);
+  static const lavender = Color(0xFFA98CC8);
+  static const paleLavender = Color(0xFFE8E0F0);
+  static const peach = Color(0xFFE7B28F);
+  static const coral = Color(0xFFF3C5B8);
+  static const gold = Color(0xFFEBCB8B);
+  static const cream = Color(0xFFF7F1EA);
+  static const offWhite = Color(0xFFFAFAF8);
+  static const ink = Color(0xFF292B2E);
+  static const neutralGray = Color(0xFF777A7D);
+  static const warmGray = Color(0xFFE8E6E2);
 
-  // Official dark identity.
-  static const darkBackground = Color(0xFF111827);
-  static const darkSurface = Color(0xFF1F2937);
-  static const darkElevatedSurface = Color(0xFF374151);
-  static const darkPrimary = Color(0xFF60A5FA);
-  static const darkSavingsGreen = Color(0xFF34D399);
-  static const darkBlushPink = Color(0xFFF3C6CE);
-  static const darkTextPrimary = Color(0xFFF9FAFB);
-  static const darkTextSecondary = Color(0xFFD1D5DB);
-  static const darkError = Color(0xFFF87171);
-  static const darkWarning = Color(0xFFFBBF24);
+  // Variantes de contraste para texto, estados y superficies oscuras.
+  static const deepMint = Color(0xFF3F706B);
+  static const deepLavender = Color(0xFF6D587E);
+  static const deepCoral = Color(0xFF9B5049);
+  static const darkBackground = Color(0xFF101214);
+  static const darkSurface = Color(0xFF181A1C);
+  static const darkElevatedSurface = Color(0xFF232628);
+  static const darkTextPrimary = Color(0xFFFAFAF8);
+  static const darkTextSecondary = Color(0xFFE8E6E2);
+
+  // Alias semánticos conservados para las pantallas existentes.
+  static const primaryBlue = mint;
+  static const primaryBlueDark = deepMint;
+  static const savingsGreen = mint;
+  static const accessibleGreen = deepMint;
+  static const white = offWhite;
+  static const darkGray = ink;
+  static const mediumGray = neutralGray;
+  static const lightGray = cream;
+  static const borderGray = warmGray;
+  static const blushPink = lavender;
+  static const blushPinkLight = paleLavender;
+  static const blushPinkDark = deepLavender;
+  static const expenseRed = deepCoral;
+  static const warningAmber = Color(0xFF8A651A);
+  static const successContainer = paleMint;
+  static const errorContainer = coral;
+  static const warningContainer = gold;
+  static const blueContainer = paleMint;
+  static const pinkContainer = paleLavender;
+
+  // Identidad para modo oscuro.
+  static const darkPrimary = mint;
+  static const darkSavingsGreen = mint;
+  static const darkBlushPink = lavender;
+  static const darkError = coral;
+  static const darkWarning = gold;
 
   static const transparent = Color(0x00000000);
-  static const whiteMuted = Color(0xCCFFFFFF);
-  static const whiteOverlay = Color(0x24FFFFFF);
-  static const primaryShadow = Color(0x332563EB);
+  static const whiteMuted = Color(0xCCFAFAF8);
+  static const whiteOverlay = Color(0x24FAFAF8);
+  static const primaryShadow = Color(0x338FC9C2);
 }

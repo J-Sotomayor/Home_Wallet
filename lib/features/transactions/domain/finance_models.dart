@@ -234,6 +234,7 @@ class FinanceTransaction {
     required this.shared,
     this.origin = TransactionOrigin.manual,
     this.importHash,
+    this.importBatchHash,
     this.sourceName,
     this.sourceVerified = false,
     this.linkedPlanId,
@@ -256,6 +257,7 @@ class FinanceTransaction {
   final bool shared;
   final TransactionOrigin origin;
   final String? importHash;
+  final String? importBatchHash;
   final String? sourceName;
   final bool sourceVerified;
   final String? linkedPlanId;
@@ -295,6 +297,7 @@ class FinanceTransactionDraft {
     required this.shared,
     this.origin = TransactionOrigin.manual,
     this.importHash,
+    this.importBatchHash,
     this.sourceName,
     this.sourceVerified = false,
     this.linkedPlanId,
@@ -315,6 +318,7 @@ class FinanceTransactionDraft {
   final bool shared;
   final TransactionOrigin origin;
   final String? importHash;
+  final String? importBatchHash;
   final String? sourceName;
   final bool sourceVerified;
   final String? linkedPlanId;

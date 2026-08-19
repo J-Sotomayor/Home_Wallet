@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/homewallet_logo_horizontal.svg" alt="HomeWallet" width="440">
+  <img src="assets/branding/generated/logo_stacked_light.png" alt="HomeWallet" width="320">
 </p>
 
 <h1 align="center">HomeWallet</h1>

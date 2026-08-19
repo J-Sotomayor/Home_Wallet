@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../app/theme/app_colors.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../households/data/household_repository.dart';
 import '../../households/domain/household_models.dart';
@@ -689,7 +690,7 @@ class _SharedExpenseDetailScreenState
                           : Icons.schedule,
                       color:
                           isPayer || remaining == 0
-                              ? Colors.green
+                              ? AppColors.deepMint
                               : Theme.of(context).colorScheme.primary,
                     ),
                     title: Text(

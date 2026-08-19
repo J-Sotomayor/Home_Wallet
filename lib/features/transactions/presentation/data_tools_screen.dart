@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app/services/app_services.dart';
+import '../../../app/theme/app_colors.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../auth/data/auth_repository.dart';
 import '../domain/finance_models.dart';
@@ -40,6 +41,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
   Set<int> _selectedImportIndexes = {};
   Set<int> _duplicateImportIndexes = {};
   Map<int, String> _importHashes = {};
+  String? _importBatchHash;
   int? _completedCount;
   String? _completedBankName;
 
@@ -53,7 +55,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
               ? 'Importación completada'
               : preview != null
               ? 'Revisar estado de cuenta'
-              : 'Importar movimientos',
+              : 'Importar estado de cuenta',
         ),
       ),
       body: SafeArea(
@@ -94,7 +96,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Acepta CSV, XLS, XLSX y PDF digital. Reconoce cada formato, comprueba los totales declarados y usa la categoría del banco cuando existe; si está vacía, la asigna automáticamente.',
+                'Acepta CSV, XLS, XLSX, PDF bancario digital y reportes con detalle exportados por HomeWallet. Comprueba los totales declarados y conserva la categoría cuando existe.',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
@@ -133,7 +135,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
         if (_busy)
           LinearProgressIndicator(value: _progress)
         else
-          const Icon(Icons.check_circle_outline, color: Colors.green),
+          const Icon(Icons.check_circle_outline, color: AppColors.deepMint),
         const SizedBox(height: 10),
         Text(
           _status ?? 'Procesando…',
@@ -145,9 +147,9 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
       const Card(
         child: ListTile(
           leading: Icon(Icons.info_outline),
-          title: Text('Formatos bancarios'),
+          title: Text('Archivos compatibles'),
           subtitle: Text(
-            'Pichincha y Guayaquil envían estructuras diferentes. HomeWallet las detecta sin solicitar ni almacenar tus credenciales bancarias.',
+            'Reconoce estados de Banco Pichincha y Banco Guayaquil, además de reportes de movimientos generados por HomeWallet. Todo se procesa sin solicitar credenciales bancarias.',
           ),
         ),
       ),
@@ -175,6 +177,21 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
           child: _ImportPreviewContent(result: result),
         ),
       ),
+      if (_duplicateImportIndexes.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        Card(
+          color: Theme.of(context).colorScheme.tertiaryContainer,
+          child: ListTile(
+            leading: const Icon(Icons.content_copy_outlined),
+            title: Text(
+              '${_duplicateImportIndexes.length} movimiento${_duplicateImportIndexes.length == 1 ? '' : 's'} ya importado${_duplicateImportIndexes.length == 1 ? '' : 's'}',
+            ),
+            subtitle: const Text(
+              'HomeWallet los bloqueó para que el saldo y el análisis no se dupliquen.',
+            ),
+          ),
+        ),
+      ],
       const SizedBox(height: 12),
       Card(
         child: ListTile(
@@ -249,6 +266,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
             _selectedImportIndexes = {};
             _duplicateImportIndexes = {};
             _importHashes = {};
+            _importBatchHash = null;
             _status = null;
           });
         },
@@ -273,6 +291,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
       if (bytes == null) {
         throw const FormatException('No se pudo leer el archivo seleccionado.');
       }
+      final batchHash = await _identity.forFile(bytes);
 
       if (mounted) {
         setState(() {
@@ -291,30 +310,33 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
           'El archivo supera 500 movimientos. Divídelo en varios periodos.',
         );
       }
-      final existing =
-          await widget.services.finance
-              .watchTransactions(widget.householdId)
-              .first;
-      final existingHashes = <String>{};
-      for (final transaction in existing) {
-        existingHashes.add(await _identity.forExisting(transaction));
-      }
-      final hashes = <int, String>{};
-      final duplicates = <int>{};
-      final seenInFile = <String>{};
-      for (var index = 0; index < imported.items.length; index++) {
-        final hash = await _identity.forImported(imported.items[index]);
-        hashes[index] = hash;
-        if (existingHashes.contains(hash) || !seenInFile.add(hash)) {
-          duplicates.add(index);
-        }
-      }
+      final duplicateScan = await _findDuplicates(
+        imported,
+        batchHash: batchHash,
+      );
+      final hashes = duplicateScan.hashes;
+      final duplicates = duplicateScan.duplicates;
       if (!mounted) return;
+      if (duplicateScan.batchAlreadyImported ||
+          duplicates.length == imported.items.length) {
+        setState(() {
+          _busy = false;
+          _status = null;
+          _preview = null;
+          _selectedImportIndexes = {};
+          _duplicateImportIndexes = duplicates;
+          _importHashes = hashes;
+          _importBatchHash = batchHash;
+        });
+        await _showAlreadyImportedDialog(imported);
+        return;
+      }
       setState(() {
         _busy = false;
         _status = null;
         _preview = imported;
         _importHashes = hashes;
+        _importBatchHash = batchHash;
         _duplicateImportIndexes = duplicates;
         _selectedImportIndexes = {
           for (var index = 0; index < imported.items.length; index++)
@@ -340,7 +362,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
   Future<void> _confirmImport() async {
     final imported = _preview;
     if (imported == null || _busy) return;
-    final selectedIndexes = _selectedImportIndexes.toList()..sort();
+    var selectedIndexes = _selectedImportIndexes.toList()..sort();
     if (selectedIndexes.isEmpty) {
       _showError('Selecciona al menos un movimiento que no esté duplicado.');
       return;
@@ -349,6 +371,34 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
       setState(() {
         _busy = true;
         _progress = null;
+        _status = 'Comprobando que la importación no esté repetida…';
+      });
+      final duplicateScan = await _findDuplicates(
+        imported,
+        batchHash: _importBatchHash,
+      );
+      final duplicates = duplicateScan.duplicates;
+      selectedIndexes =
+          selectedIndexes
+              .where((index) => !duplicates.contains(index))
+              .toList();
+      if (duplicateScan.batchAlreadyImported || selectedIndexes.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _status = null;
+            _duplicateImportIndexes = duplicates;
+            _selectedImportIndexes = {};
+          });
+          await _showAlreadyImportedDialog(imported);
+        }
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _importHashes = duplicateScan.hashes;
+        _duplicateImportIndexes = duplicates;
+        _selectedImportIndexes = selectedIndexes.toSet();
         _status = 'Cifrando y guardando ${selectedIndexes.length} movimientos…';
       });
       await widget.services.finance.addTransactions(
@@ -360,6 +410,7 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
                 .map(
                   (entry) => FinanceTransactionDraft(
                     importHash: _importHashes[entry.$1],
+                    importBatchHash: _importBatchHash,
                     description: entry.$2.description,
                     category: entry.$2.category,
                     amountMinor: entry.$2.amountMinor,
@@ -399,12 +450,81 @@ class _DataToolsScreenState extends State<DataToolsScreen> {
     }
   }
 
+  Future<
+    ({Map<int, String> hashes, Set<int> duplicates, bool batchAlreadyImported})
+  >
+  _findDuplicates(
+    BankStatementImportResult imported, {
+    String? batchHash,
+  }) async {
+    final existing =
+        await widget.services.finance
+            .watchTransactions(widget.householdId)
+            .first;
+    final existingHashes = <String>{};
+    var batchAlreadyImported = false;
+    for (final transaction in existing) {
+      existingHashes.add(await _identity.forExisting(transaction));
+      if (batchHash != null && transaction.importBatchHash == batchHash) {
+        batchAlreadyImported = true;
+      }
+    }
+    final hashes = <int, String>{};
+    final duplicates = <int>{};
+    final seenInFile = <String>{};
+    for (var index = 0; index < imported.items.length; index++) {
+      final hash = await _identity.forImported(imported.items[index]);
+      hashes[index] = hash;
+      if (existingHashes.contains(hash) || !seenInFile.add(hash)) {
+        duplicates.add(index);
+      }
+    }
+    return (
+      hashes: hashes,
+      duplicates: duplicates,
+      batchAlreadyImported: batchAlreadyImported,
+    );
+  }
+
+  Future<void> _showAlreadyImportedDialog(
+    BankStatementImportResult imported,
+  ) async {
+    if (!mounted) return;
+    final viewImported = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            icon: const Icon(Icons.fact_check_outlined),
+            title: const Text('Esta importación ya se realizó'),
+            content: Text(
+              'Los ${imported.items.length} movimientos de ${imported.bankName} ya existen en HomeWallet. No se guardó nada para evitar duplicar tu saldo y tus reportes.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Elegir otro archivo'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.receipt_long_outlined),
+                label: const Text('Ver importados'),
+              ),
+            ],
+          ),
+    );
+    if (viewImported == true && mounted) {
+      Navigator.of(context).pop(true);
+    }
+  }
+
   void _discardPreview() {
     setState(() {
       _preview = null;
       _selectedImportIndexes = {};
       _duplicateImportIndexes = {};
       _importHashes = {};
+      _importBatchHash = null;
       _status = null;
     });
   }
@@ -594,7 +714,7 @@ class _ImportPreviewContent extends StatelessWidget {
               result.totalsVerified
                   ? Icons.verified_outlined
                   : Icons.fact_check_outlined,
-              color: Colors.green,
+              color: AppColors.deepMint,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -730,13 +850,13 @@ class _FinancialHealthPreview extends StatelessWidget {
             ? (
               'Salud financiera ajustada',
               Icons.monitor_heart_outlined,
-              Colors.orange.shade800,
+              AppColors.warningAmber,
             )
             : savingRatio >= .1
             ? (
               'Salud financiera favorable',
               Icons.favorite_outline,
-              Colors.green.shade700,
+              AppColors.deepMint,
             )
             : (
               'Flujo estable; puedes reforzar el ahorro',
@@ -777,7 +897,7 @@ class _FinancialHealthPreview extends StatelessWidget {
             color:
                 expenseRatio > 1
                     ? Theme.of(context).colorScheme.error
-                    : Colors.green.shade700,
+                    : AppColors.deepMint,
           ),
           const SizedBox(height: 10),
           _HealthBar(

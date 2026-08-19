@@ -195,6 +195,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
                       ? TransactionOrigin.imported
                       : TransactionOrigin.manual,
               importHash: clear['importHash'] as String?,
+              importBatchHash: clear['importBatchHash'] as String?,
               sourceName: clear['sourceName'] as String?,
               sourceVerified: clear['sourceVerified'] as bool? ?? false,
               linkedPlanId: clear['linkedPlanId'] as String?,
@@ -546,6 +547,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
       shared: shared,
       origin: original.origin,
       importHash: original.importHash,
+      importBatchHash: original.importBatchHash,
       sourceName: original.sourceName,
       // Any manual correction breaks the exact match with the source file.
       sourceVerified: false,
@@ -1414,6 +1416,8 @@ class FirebaseFinanceRepository implements FinanceRepository {
       'shared': transaction.shared,
       'origin': transaction.origin.name,
       if (transaction.importHash != null) 'importHash': transaction.importHash,
+      if (transaction.importBatchHash != null)
+        'importBatchHash': transaction.importBatchHash,
       if (transaction.sourceName?.trim().isNotEmpty ?? false)
         'sourceName': transaction.sourceName!.trim(),
       'sourceVerified': transaction.sourceVerified,
@@ -1586,6 +1590,7 @@ class FirebaseFinanceRepository implements FinanceRepository {
               ? TransactionOrigin.imported
               : TransactionOrigin.manual,
       importHash: clear['importHash'] as String?,
+      importBatchHash: clear['importBatchHash'] as String?,
       sourceName: clear['sourceName'] as String?,
       sourceVerified: clear['sourceVerified'] as bool? ?? false,
       fundingSource: ExpenseFundingSource.parse(clear['fundingSource']),

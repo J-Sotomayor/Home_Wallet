@@ -30,7 +30,7 @@ class _FirstLaunchGateState extends State<FirstLaunchGate> {
   @override
   Widget build(BuildContext context) {
     if (_completed == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(body: HomeWalletLoadingView());
     }
     if (_completed!) return widget.child;
     return WelcomeScreen(
@@ -77,7 +77,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       title: 'Seguro y confiable',
       description:
           'La información sensible del espacio se guarda cifrada y con permisos por integrante.',
-      accent: Color(0xFF047857),
+      accent: AppColors.deepMint,
     ),
   ];
 
@@ -98,7 +98,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
               padding: const EdgeInsets.fromLTRB(24, 12, 12, 0),
               child: Row(
                 children: [
-                  const HomeWalletLogo(width: 150, height: 44),
+                  const HomeWalletLogo(width: 110, height: 100),
                   const Spacer(),
                   TextButton(
                     onPressed: _busy ? null : _finish,

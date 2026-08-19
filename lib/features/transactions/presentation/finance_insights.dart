@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../app/theme/app_colors.dart';
 import '../domain/finance_models.dart';
 
 class FinanceInsights extends StatelessWidget {
@@ -11,12 +12,12 @@ class FinanceInsights extends StatelessWidget {
   final List<FinanceTransaction> transactions;
 
   static const _chartColors = <Color>[
-    Color(0xFF2563EB),
-    Color(0xFF14B8A6),
-    Color(0xFFF59E0B),
-    Color(0xFFEC4899),
-    Color(0xFF8B5CF6),
-    Color(0xFF64748B),
+    AppColors.peach,
+    AppColors.mint,
+    AppColors.lavender,
+    AppColors.gold,
+    AppColors.coral,
+    AppColors.neutralGray,
   ];
   static const _months = <String>[
     'enero',
@@ -37,8 +38,7 @@ class FinanceInsights extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final incomeColor =
-        dark ? const Color(0xFF6EE7B7) : const Color(0xFF047857);
+    final incomeColor = dark ? AppColors.mint : AppColors.deepMint;
     final expenseColor = scheme.error;
     final now = DateTime.now();
     final monthly =
@@ -106,7 +106,7 @@ class FinanceInsights extends StatelessWidget {
               savings: savings,
               incomeColor: incomeColor,
               expenseColor: expenseColor,
-              savingColor: scheme.primary,
+              savingColor: scheme.secondary,
             ),
             const SizedBox(height: 18),
             Row(

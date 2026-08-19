@@ -28,6 +28,7 @@ abstract interface class HouseholdRepository {
     HouseholdRole invitedRole = HouseholdRole.member,
   });
   Future<void> revokeInvitation(String householdId);
+  Future<HouseholdInvitationPreview> previewInvitationCode(String code);
   Future<String> acceptInvitation(String rawPayload, AuthUser user);
   Future<void> updateMemberRole({
     required String householdId,
@@ -234,6 +235,9 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
             }
             final data = household.data()!;
             final key = await _keyStore.readHouseholdKey(householdId);
+            if (key != null) {
+              unawaited(_tryBackupHouseholdKey(householdId, key));
+            }
             var name = 'Espacio protegido';
             var kind = HouseholdKind.parse(data['kind']);
             if (key != null && data['privatePayload'] is Map) {
@@ -326,7 +330,10 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
         {'privatePayload': memberPayload},
       );
       await batch.commit();
-      await _tryBackupHouseholdKey(householdId, key);
+      // El espacio no se considera listo hasta que exista una copia segura.
+      // Así un inicio de sesión futuro en otro dispositivo no depende del
+      // almacenamiento local del primer teléfono.
+      await _backupHouseholdKey(householdId, key);
       await setActiveHousehold(user.uid, householdId);
       return householdId;
     } catch (error) {
@@ -381,6 +388,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
     try {
       await _refreshVerifiedSession();
       final key = await _requireKey(householdId);
+      await _backupHouseholdKey(householdId, key);
       final result = await _functions.httpsCallable('createInvitation').call({
         'householdId': householdId,
         'role': invitedRole == HouseholdRole.junior ? 'junior' : 'member',
@@ -388,8 +396,13 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
       final data = _asMap(result.data);
       final invitationId = data['invitationId'] as String?;
       final token = data['token'] as String?;
+      final code = data['code'] as String?;
       final expiresAtMillis = (data['expiresAt'] as num?)?.toInt();
-      if (invitationId == null || token == null || expiresAtMillis == null) {
+      if (invitationId == null ||
+          token == null ||
+          code == null ||
+          !RegExp(r'^\d{8}$').hasMatch(code) ||
+          expiresAtMillis == null) {
         throw const AppException('No se pudo construir la invitación segura.');
       }
       return InvitationPayload(
@@ -402,6 +415,64 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
           isUtc: true,
         ),
         kind: HouseholdKind.parse(data['kind']),
+        role: HouseholdRole.parse(data['role']),
+        shortCode: code,
+      );
+    } catch (error) {
+      throw mapFirebaseError(error);
+    }
+  }
+
+  @override
+  Future<HouseholdInvitationPreview> previewInvitationCode(String code) async {
+    final normalizedCode = code.replaceAll(RegExp(r'\D'), '');
+    if (!RegExp(r'^\d{8}$').hasMatch(normalizedCode)) {
+      throw const AppException('Ingresa los 8 números del código.');
+    }
+    try {
+      await _refreshVerifiedSession();
+      final result = await _functions
+          .httpsCallable('resolveInvitationCode')
+          .call({'code': normalizedCode});
+      final data = _asMap(result.data);
+      final householdId = data['householdId'] as String?;
+      final invitationId = data['invitationId'] as String?;
+      final token = data['token'] as String?;
+      final encodedKey = data['key'] as String?;
+      final expiresAtMillis = (data['expiresAt'] as num?)?.toInt();
+      if (householdId == null ||
+          invitationId == null ||
+          token == null ||
+          encodedKey == null ||
+          expiresAtMillis == null) {
+        throw const AppException('La invitación está incompleta.');
+      }
+      final key = base64Url.decode(
+        encodedKey.padRight((encodedKey.length + 3) ~/ 4 * 4, '='),
+      );
+      if (key.length != 32) {
+        throw const AppException('La invitación no contiene una clave válida.');
+      }
+      final payload = InvitationPayload(
+        householdId: householdId,
+        invitationId: invitationId,
+        token: token,
+        keyBytes: key,
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(
+          expiresAtMillis,
+          isUtc: true,
+        ),
+        kind: HouseholdKind.parse(data['kind']),
+        role: HouseholdRole.parse(data['role']),
+        shortCode: normalizedCode,
+      );
+      return HouseholdInvitationPreview(
+        payload: payload,
+        householdName:
+            (data['name'] as String?)?.trim().isNotEmpty == true
+                ? (data['name'] as String).trim()
+                : payload.kind.label,
+        role: HouseholdRole.parse(data['role']),
       );
     } catch (error) {
       throw mapFirebaseError(error);
@@ -454,7 +525,7 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
           .collection('members')
           .doc(user.uid)
           .set({'privatePayload': memberPayload}, SetOptions(merge: true));
-      await _tryBackupHouseholdKey(householdId, payload.keyBytes);
+      await _backupHouseholdKey(householdId, payload.keyBytes);
       await setActiveHousehold(user.uid, householdId);
       return householdId;
     } catch (error) {
@@ -613,34 +684,80 @@ class FirebaseHouseholdRepository implements HouseholdRepository {
     }
     try {
       await _refreshVerifiedSession();
-      final result = await _functions.httpsCallable('recoverHouseholdKey').call(
-        {'householdId': householdId},
-      );
-      final encoded = _asMap(result.data)['key'];
-      if (encoded is! String) return false;
-      final key = base64Url.decode(
-        encoded.padRight((encoded.length + 3) ~/ 4 * 4, '='),
-      );
-      if (key.length != 32) return false;
-      await _keyStore.writeHouseholdKey(householdId, key);
-      return true;
+      final result =
+          await _functions.httpsCallable('recoverUserHouseholdKeys').call();
+      final keys = _asMap(_asMap(result.data)['keys']);
+      for (final entry in keys.entries) {
+        if (entry.value is! String) continue;
+        final encoded = entry.value as String;
+        final key = base64Url.decode(
+          encoded.padRight((encoded.length + 3) ~/ 4 * 4, '='),
+        );
+        if (key.length == 32) {
+          await _keyStore.writeHouseholdKey(entry.key, key);
+        }
+      }
+      if (await _keyStore.readHouseholdKey(householdId) != null) return true;
     } on Object {
-      // Si todavía no existe respaldo o no hay conexión, la interfaz conserva
-      // el QR como recuperación manual y permite reintentar.
-      return false;
+      // Una versión anterior del backend o una caída temporal continúa por la
+      // recuperación puntual con reintentos.
     }
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await _refreshVerifiedSession();
+        final result = await _functions
+            .httpsCallable('recoverHouseholdKey')
+            .call({'householdId': householdId});
+        final encoded = _asMap(result.data)['key'];
+        if (encoded is! String) continue;
+        final key = base64Url.decode(
+          encoded.padRight((encoded.length + 3) ~/ 4 * 4, '='),
+        );
+        if (key.length != 32) continue;
+        await _keyStore.writeHouseholdKey(householdId, key);
+        return true;
+      } on Object {
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 2200 + attempt * 800),
+          );
+        }
+      }
+    }
+    // Solo después de varios intentos se ofrece la recuperación manual.
+    return false;
   }
 
   Future<void> _tryBackupHouseholdKey(String householdId, List<int> key) async {
     try {
-      await _functions.httpsCallable('backupHouseholdKey').call({
-        'householdId': householdId,
-        'key': base64UrlEncode(key).replaceAll('=', ''),
-      });
+      await _backupHouseholdKey(householdId, key);
     } on Object {
       // El respaldo mejora la recuperación, pero una caída temporal de la
       // Function no debe bloquear el acceso con una clave local válida.
     }
+  }
+
+  Future<void> _backupHouseholdKey(String householdId, List<int> key) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await _refreshVerifiedSession();
+        await _functions.httpsCallable('backupHouseholdKey').call({
+          'householdId': householdId,
+          'key': base64UrlEncode(key).replaceAll('=', ''),
+        });
+        return;
+      } on Object catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 1300 + attempt * 700),
+          );
+        }
+      }
+    }
+    throw lastError ??
+        const AppException('No se pudo respaldar la clave del espacio.');
   }
 
   Future<bool> _hasActiveMembership(String householdId, String uid) async {

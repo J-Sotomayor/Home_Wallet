@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:excel/excel.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:homewallet/features/transactions/domain/finance_models.dart';
 import 'package:homewallet/features/transactions/services/transaction_csv_service.dart';
@@ -38,6 +39,24 @@ void main() {
 
     expect(bytes, isNotEmpty);
     expect(bytes.take(2), <int>[0x50, 0x4b]);
+  });
+
+  test('bank analysis XLSX contains insights without raw movement details', () {
+    final bytes = exports.exportExcel(
+      transactions,
+      analysisOnly: true,
+      reportTitle: 'Análisis bancario',
+    );
+    final workbook = Excel.decodeBytes(bytes);
+    final sheet = workbook.tables['Análisis'];
+    final content = sheet!.rows
+        .expand((row) => row)
+        .map((cell) => cell?.value.toString() ?? '')
+        .join('|');
+
+    expect(content, contains('ANÁLISIS DE GASTOS POR CATEGORÍA'));
+    expect(content, contains('RECOMENDACIONES DE SALUD FINANCIERA'));
+    expect(content, isNot(contains('Supermercado')));
   });
 
   test('generates a valid PDF document', () async {

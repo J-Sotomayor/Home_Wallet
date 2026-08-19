@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -38,11 +39,13 @@ Future<void> main() async {
   Object? startupError;
   StackTrace? startupStack;
   AppServices? services;
+  var initialThemeUserId = 'guest';
 
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    initialThemeUserId = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     if (!kIsWeb) {
       FirebaseFirestore.instance.settings = const Settings(
@@ -89,7 +92,9 @@ Future<void> main() async {
     startupStack = stack;
   }
 
-  final themeController = await ThemeController.load();
+  final themeController = await ThemeController.load(
+    userId: initialThemeUserId,
+  );
   runApp(
     HomeWalletApp(
       themeController: themeController,
@@ -179,15 +184,17 @@ class _HomeWalletAppState extends State<HomeWalletApp> {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: widget.themeController.themeMode,
-      home:
-          widget.services == null
-              ? StartupErrorScreen(error: widget.startupError)
-              : FirstLaunchGate(
-                child: AuthGate(
-                  services: widget.services!,
-                  themeController: widget.themeController,
+      home: HomeWalletStartupGate(
+        child:
+            widget.services == null
+                ? StartupErrorScreen(error: widget.startupError)
+                : FirstLaunchGate(
+                  child: AuthGate(
+                    services: widget.services!,
+                    themeController: widget.themeController,
+                  ),
                 ),
-              ),
+      ),
     );
   }
 }
@@ -208,7 +215,7 @@ class StartupErrorScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 460),
               child: Column(
                 children: [
-                  const HomeWalletLogo(width: 260, height: 78),
+                  const HomeWalletLogo(width: 230, height: 220),
                   const SizedBox(height: 30),
                   Icon(
                     Icons.cloud_off_outlined,

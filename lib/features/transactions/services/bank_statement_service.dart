@@ -5,6 +5,7 @@ import 'package:excel2003/excel2003.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 
 import '../domain/finance_models.dart';
+import '../domain/transaction_categories.dart';
 import 'transaction_csv_service.dart';
 import 'transaction_import_rules.dart';
 
@@ -65,6 +66,14 @@ class BankStatementService {
   BankStatementImportResult parsePdfPages(String fileName, List<String> pages) {
     final allText = pages.join('\n');
     final normalized = TransactionImportRules.normalize(allText);
+    if (normalized.contains('homewallet')) {
+      if (!normalized.contains('detalle de movimientos')) {
+        throw const FormatException(
+          'Este reporte de HomeWallet contiene solo el análisis y no incluye movimientos para importar. Exporta un reporte con detalle o usa el archivo Excel o CSV.',
+        );
+      }
+      return _parseHomeWalletPdf(pages, allText);
+    }
     if (normalized.contains('banco guayaquil') &&
         normalized.contains('resumen de movimientos')) {
       return _parseGuayaquilPdf(pages, allText);
@@ -117,6 +126,259 @@ class BankStatementService {
       declaredIncomeMinor: declaredIncome,
       declaredExpenseMinor: declaredExpense,
     );
+  }
+
+  BankStatementImportResult _parseHomeWalletPdf(
+    List<String> pages,
+    String allText,
+  ) {
+    final items = <ImportedTransaction>[];
+    for (final page in pages) {
+      items.addAll(_parseHomeWalletPdfPage(page));
+    }
+    if (items.isEmpty) {
+      throw const FormatException(
+        'El reporte de HomeWallet no contiene movimientos legibles. Exporta nuevamente el reporte con el detalle de movimientos o usa Excel o CSV.',
+      );
+    }
+
+    final declaredIncome = _homeWalletTotal(allText, 'total creditos');
+    final declaredDebits = _homeWalletTotal(allText, 'total debitos');
+    final saving = items
+        .where((item) => item.type == TransactionType.saving)
+        .fold<int>(0, (sum, item) => sum + item.amountMinor);
+    final declaredExpense =
+        declaredDebits == null || declaredDebits < saving
+            ? null
+            : declaredDebits - saving;
+    return _validatedResult(
+      bankName: 'HomeWallet',
+      format: BankStatementFormat.pdf,
+      items: items,
+      declaredIncomeMinor: declaredIncome,
+      declaredExpenseMinor: declaredExpense,
+    );
+  }
+
+  List<ImportedTransaction> _parseHomeWalletPdfPage(String page) {
+    final lines =
+        page
+            .split(RegExp(r'\r?\n'))
+            .map((line) => line.trim())
+            .where((line) => line.isNotEmpty)
+            .toList();
+    if (lines.isEmpty) return const [];
+
+    var tableStart = lines.indexWhere(
+      (line) =>
+          TransactionImportRules.normalize(line) == 'detalle de movimientos',
+    );
+    if (tableStart < 0) {
+      tableStart = lines.indexWhere(
+        (line) => TransactionImportRules.normalize(line) == 'fecha',
+      );
+    }
+    if (tableStart < 0) return const [];
+
+    final rowBased = <ImportedTransaction>[];
+    for (final line in lines.skip(tableStart + 1)) {
+      final match = RegExp(
+        r'^(\d{1,2}/\d{1,2}/\d{2,4})\s+(Ingreso|Gasto|Ahorro)\s+(.+?)\s+([-\u0024€£]?\s*\d[\d.,]*[.,]\d{2})\s*$',
+        caseSensitive: false,
+      ).firstMatch(line);
+      if (match == null) continue;
+      final occurredAt = _homeWalletDate(match.group(1)!);
+      final type = _homeWalletType(match.group(2)!);
+      final amount = TransactionImportRules.parseSignedMinor(match.group(4)!);
+      if (occurredAt == null || type == null || amount == null || amount == 0) {
+        continue;
+      }
+      final parsedText = _homeWalletRowText(type, match.group(3)!);
+      final category = parsedText.category;
+      final description = parsedText.description;
+      if (description.isEmpty) continue;
+      rowBased.add(
+        ImportedTransaction(
+          description: description,
+          amountMinor: amount.abs(),
+          occurredAt: occurredAt,
+          type: type,
+          category: TransactionImportRules.categoryFor(
+            type,
+            description,
+            sourceCategory: category,
+          ),
+        ),
+      );
+    }
+    if (rowBased.isNotEmpty) return rowBased;
+
+    final datePositions = <int>[];
+    for (var index = tableStart + 1; index < lines.length; index++) {
+      if (_homeWalletDate(lines[index]) != null) datePositions.add(index);
+    }
+    if (datePositions.isEmpty) return const [];
+
+    final drafts = <_HomeWalletPdfDraft>[];
+    final sharedAmounts = <int>[];
+    for (var index = 0; index < datePositions.length; index++) {
+      final start = datePositions[index];
+      final end =
+          index + 1 < datePositions.length
+              ? datePositions[index + 1]
+              : lines.length;
+      final segment = lines.sublist(start + 1, end);
+      final sharedHeader = segment.indexWhere((line) {
+        final value = TransactionImportRules.normalize(line);
+        return value == 'debito' || value == 'credito';
+      });
+      final metadata =
+          sharedHeader < 0 ? segment : segment.sublist(0, sharedHeader);
+      if (sharedHeader >= 0) {
+        for (final line in segment.skip(sharedHeader + 1)) {
+          if (!_isStandaloneMoney(line)) continue;
+          final amount = TransactionImportRules.parseSignedMinor(line);
+          if (amount != null && amount != 0) sharedAmounts.add(amount.abs());
+        }
+      }
+
+      final typePosition = metadata.indexWhere(
+        (line) => _homeWalletType(line) != null,
+      );
+      if (typePosition < 0) continue;
+      final type = _homeWalletType(metadata[typePosition])!;
+      final content =
+          metadata
+              .skip(typePosition + 1)
+              .where((line) => !_isHomeWalletPdfNoise(line))
+              .toList();
+      final ownMoneyPosition = content.indexWhere(_isStandaloneMoney);
+      final ownAmount =
+          ownMoneyPosition < 0
+              ? null
+              : TransactionImportRules.parseSignedMinor(
+                content[ownMoneyPosition],
+              )?.abs();
+      final textContent =
+          ownMoneyPosition < 0 ? content : content.sublist(0, ownMoneyPosition);
+      if (textContent.isEmpty) continue;
+      final category = textContent.first;
+      final description = TransactionImportRules.cleanDescription(
+        textContent.length == 1 ? category : textContent.sublist(1).join(' '),
+      );
+      drafts.add(
+        _HomeWalletPdfDraft(
+          occurredAt: _homeWalletDate(lines[start])!,
+          type: type,
+          category: category,
+          description: description,
+          amountMinor: ownAmount,
+        ),
+      );
+    }
+
+    var sharedAmountIndex = 0;
+    final result = <ImportedTransaction>[];
+    for (final draft in drafts) {
+      var amount = draft.amountMinor;
+      if ((amount == null || amount == 0) &&
+          sharedAmountIndex < sharedAmounts.length) {
+        amount = sharedAmounts[sharedAmountIndex++];
+      }
+      if (amount == null || amount == 0 || draft.description.isEmpty) continue;
+      result.add(
+        ImportedTransaction(
+          description: draft.description,
+          amountMinor: amount,
+          occurredAt: draft.occurredAt,
+          type: draft.type,
+          category: TransactionImportRules.categoryFor(
+            draft.type,
+            draft.description,
+            sourceCategory: draft.category,
+          ),
+        ),
+      );
+    }
+    return result;
+  }
+
+  static int? _homeWalletTotal(String text, String normalizedLabel) {
+    final normalized = TransactionImportRules.normalize(text);
+    final match = RegExp(
+      '${RegExp.escape(normalizedLabel)}\\s*:\\s*[-\u0024€£]?\\s*(\\d[\\d.,]*[.,]\\d{2})',
+    ).firstMatch(normalized);
+    return match == null
+        ? null
+        : TransactionImportRules.parseSignedMinor(match.group(1)!)?.abs();
+  }
+
+  static DateTime? _homeWalletDate(String value) {
+    if (!RegExp(r'^\d{1,2}/\d{1,2}/\d{2,4}$').hasMatch(value.trim())) {
+      return null;
+    }
+    return TransactionImportRules.parseDate(value);
+  }
+
+  static TransactionType? _homeWalletType(String value) {
+    return switch (TransactionImportRules.normalize(value)) {
+      'ingreso' => TransactionType.income,
+      'gasto' => TransactionType.expense,
+      'ahorro' => TransactionType.saving,
+      _ => null,
+    };
+  }
+
+  static _HomeWalletRowText _homeWalletRowText(
+    TransactionType type,
+    String value,
+  ) {
+    final words = value.trim().split(RegExp(r'\s+'));
+    final categories =
+        TransactionCategories.forType(type).toList()..sort(
+          (left, right) => right
+              .split(RegExp(r'\s+'))
+              .length
+              .compareTo(left.split(RegExp(r'\s+')).length),
+        );
+    for (final category in categories) {
+      final wordCount = category.split(RegExp(r'\s+')).length;
+      if (words.length <= wordCount) continue;
+      final sourceCategory = words.take(wordCount).join(' ');
+      if (TransactionImportRules.normalize(sourceCategory) !=
+          TransactionImportRules.normalize(category)) {
+        continue;
+      }
+      return _HomeWalletRowText(
+        category: sourceCategory,
+        description: TransactionImportRules.cleanDescription(
+          words.skip(wordCount).join(' '),
+        ),
+      );
+    }
+    return _HomeWalletRowText(
+      category: words.first,
+      description: TransactionImportRules.cleanDescription(
+        words.length == 1 ? words.first : words.skip(1).join(' '),
+      ),
+    );
+  }
+
+  static bool _isHomeWalletPdfNoise(String value) {
+    final normalized = TransactionImportRules.normalize(value);
+    return const {
+          'fecha',
+          'tipo',
+          'categoria',
+          'descripcion',
+          'debito',
+          'credito',
+          'detalle de movimientos',
+        }.contains(normalized) ||
+        normalized.startsWith('integrante ·') ||
+        normalized.startsWith('total debitos:') ||
+        normalized.startsWith('generado por homewallet') ||
+        normalized.startsWith('pagina ');
   }
 
   BankStatementImportResult _parseGuayaquilPdf(
@@ -822,6 +1084,29 @@ class _StatementSheet {
 
   final String name;
   final List<List<Object?>> rows;
+}
+
+class _HomeWalletPdfDraft {
+  const _HomeWalletPdfDraft({
+    required this.occurredAt,
+    required this.type,
+    required this.category,
+    required this.description,
+    required this.amountMinor,
+  });
+
+  final DateTime occurredAt;
+  final TransactionType type;
+  final String category;
+  final String description;
+  final int? amountMinor;
+}
+
+class _HomeWalletRowText {
+  const _HomeWalletRowText({required this.category, required this.description});
+
+  final String category;
+  final String description;
 }
 
 class _HeaderMatch {

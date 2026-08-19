@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/services/app_services.dart';
 import '../../../app/theme/theme_controller.dart';
+import '../../../app/widgets/homewallet_logo.dart';
 import '../../households/presentation/household_gate.dart';
 import '../data/auth_repository.dart';
 import 'auth_flow.dart';
@@ -80,7 +81,7 @@ class _AuthGateState extends State<AuthGate> {
         }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+            body: HomeWalletLoadingView(message: 'Abriendo tu espacio'),
           );
         }
         final user = snapshot.data;
@@ -102,15 +103,11 @@ class _AuthGateState extends State<AuthGate> {
             onVerified: _finishEmailVerification,
           );
         }
-        return SessionLockGate(
-          uid: user.uid,
-          service: widget.services.biometricLock,
-          onSignOut: widget.services.auth.signOut,
-          child: HouseholdGate(
-            user: user,
-            services: widget.services,
-            themeController: widget.themeController,
-          ),
+        return _AuthenticatedSession(
+          key: ValueKey('authenticated_session_${user.uid}'),
+          user: user,
+          services: widget.services,
+          themeController: widget.themeController,
         );
       },
     );
@@ -137,5 +134,65 @@ class _AuthGateState extends State<AuthGate> {
       });
     }
     await widget.services.auth.signOut();
+  }
+}
+
+class _AuthenticatedSession extends StatefulWidget {
+  const _AuthenticatedSession({
+    super.key,
+    required this.user,
+    required this.services,
+    required this.themeController,
+  });
+
+  final AuthUser user;
+  final AppServices services;
+  final ThemeController themeController;
+
+  @override
+  State<_AuthenticatedSession> createState() => _AuthenticatedSessionState();
+}
+
+class _AuthenticatedSessionState extends State<_AuthenticatedSession> {
+  bool _signingOut = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final notifications = widget.services.notifications;
+    if (notifications != null) {
+      unawaited(notifications.registerUser(widget.user.uid));
+    }
+  }
+
+  @override
+  void dispose() {
+    final notifications = widget.services.notifications;
+    if (notifications != null) {
+      unawaited(notifications.unregisterUser(widget.user.uid));
+    }
+    super.dispose();
+  }
+
+  Future<void> _signOut() async {
+    if (_signingOut) return;
+    _signingOut = true;
+    await widget.services.notifications?.unregisterUser(widget.user.uid);
+    await widget.services.auth.signOut();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SessionLockGate(
+      uid: widget.user.uid,
+      service: widget.services.biometricLock,
+      onSignOut: _signOut,
+      child: HouseholdGate(
+        user: widget.user,
+        services: widget.services,
+        themeController: widget.themeController,
+        onSignOut: _signOut,
+      ),
+    );
   }
 }

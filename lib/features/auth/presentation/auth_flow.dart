@@ -117,7 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Center(child: HomeWalletLogo(width: 290, height: 86)),
+            const Center(child: HomeWalletLogo(width: 240, height: 220)),
             const SizedBox(height: AppSpacing.xl),
             Text(
               'Bienvenida a tu espacio financiero',
@@ -299,7 +299,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Center(child: HomeWalletLogo(width: 250, height: 74)),
+            const Center(child: HomeWalletLogo(width: 220, height: 200)),
             const SizedBox(height: AppSpacing.xl),
             Text(
               'Crea tu cuenta',
@@ -506,7 +506,7 @@ class _PasswordRecoveryScreenState extends State<PasswordRecoveryScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Center(child: HomeWalletLogo(width: 250, height: 74)),
+            const Center(child: HomeWalletLogo(width: 220, height: 200)),
             const SizedBox(height: AppSpacing.xl),
             Text(
               'Recupera tu contraseña',
@@ -637,7 +637,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Center(child: HomeWalletLogo(width: 250, height: 74)),
+          const Center(child: HomeWalletLogo(width: 220, height: 200)),
           const SizedBox(height: AppSpacing.xxl),
           Center(
             child: CircleAvatar(
