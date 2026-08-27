@@ -22,6 +22,19 @@
 		<string>????</string>
 		<key>CFBundleVersion</key>
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
+		<key>GIDClientID</key>
+		<string>472403004735-jdah9mo075lq7bnugp7unb8p3hfh4d27.apps.googleusercontent.com</string>
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleTypeRole</key>
+				<string>Editor</string>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>com.googleusercontent.apps.472403004735-jdah9mo075lq7bnugp7unb8p3hfh4d27</string>
+				</array>
+			</dict>
+		</array>
 		<key>NSCameraUsageDescription</key>
 		<string>HomeWallet usa la cámara únicamente para escanear invitaciones QR de tu hogar.</string>
 		<key>NSFaceIDUsageDescription</key>
@@ -55,6 +68,7 @@
 		<false/>
 		<key>UIBackgroundModes</key>
 		<array>
+			<string>fetch</string>
 			<string>remote-notification</string>
 		</array>
 	</dict>

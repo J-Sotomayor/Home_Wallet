@@ -117,6 +117,14 @@ class _HomeWalletStartupGateState extends State<HomeWalletStartupGate> {
   bool _ready = false;
 
   @override
+  void initState() {
+    super.initState();
+    _timer = Timer(widget.minimumDisplayTime, () {
+      if (mounted) setState(() => _ready = true);
+    });
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_precacheStarted) return;
@@ -127,14 +135,13 @@ class _HomeWalletStartupGateState extends State<HomeWalletStartupGate> {
           ? 'assets/branding/generated/logo_stacked_dark.png'
           : 'assets/branding/generated/logo_stacked_light.png',
     );
-    unawaited(precacheImage(asset, context).whenComplete(_startTimer));
-  }
-
-  void _startTimer() {
-    if (!mounted) return;
-    _timer = Timer(widget.minimumDisplayTime, () {
-      if (mounted) setState(() => _ready = true);
-    });
+    unawaited(
+      precacheImage(asset, context).catchError((_) {
+        // In test/unit environments the image cache warm-up can fail or be delayed.
+        // The startup splash visibility should remain driven by the minimum display
+        // timeout; pre-caching is best-effort.
+      }),
+    );
   }
 
   @override

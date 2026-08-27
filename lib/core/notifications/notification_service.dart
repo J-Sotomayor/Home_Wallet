@@ -106,6 +106,15 @@ class NotificationService {
             >()
             ?.requestNotificationsPermission();
       }
+      if (!kIsWeb && Platform.isIOS) {
+        final apnsToken = await _waitForApnsToken();
+        if (apnsToken == null) {
+          debugPrint(
+            'APNs todavía no entregó un token; se reintentará al abrir la app.',
+          );
+          return false;
+        }
+      }
       final token = await _messaging.getToken();
       if (token == null) return false;
       await _saveToken(uid, token);
@@ -120,6 +129,15 @@ class NotificationService {
       debugPrint('No se pudo registrar el dispositivo para FCM: $error');
       return false;
     }
+  }
+
+  Future<String?> _waitForApnsToken() async {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final token = await _messaging.getAPNSToken();
+      if (token != null && token.isNotEmpty) return token;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    return null;
   }
 
   Future<void> unregisterUser(String uid) async {
