@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../app/widgets/homewallet_logo.dart';
 import '../../../core/errors/app_exception.dart';
@@ -62,21 +63,36 @@ class _AuthFlowState extends State<AuthFlow> {
   }
 
   @override
-  Widget build(BuildContext context) => switch (_step) {
-    _AuthStep.login => LoginScreen(
-      repository: widget.repository,
-      onRegister: () => setState(() => _step = _AuthStep.register),
-      onForgotPassword: () => setState(() => _step = _AuthStep.recovery),
-    ),
-    _AuthStep.register => RegisterScreen(
-      repository: widget.repository,
-      onBack: () => setState(() => _step = _AuthStep.login),
-    ),
-    _AuthStep.recovery => PasswordRecoveryScreen(
-      repository: widget.repository,
-      onBack: () => setState(() => _step = _AuthStep.login),
-    ),
-  };
+  Widget build(BuildContext context) {
+    final content = switch (_step) {
+      _AuthStep.login => LoginScreen(
+        repository: widget.repository,
+        onRegister: () => setState(() => _step = _AuthStep.register),
+        onForgotPassword: () => setState(() => _step = _AuthStep.recovery),
+      ),
+      _AuthStep.register => RegisterScreen(
+        repository: widget.repository,
+        onBack: _returnToLogin,
+      ),
+      _AuthStep.recovery => PasswordRecoveryScreen(
+        repository: widget.repository,
+        onBack: _returnToLogin,
+      ),
+    };
+    return PopScope<void>(
+      canPop: _step == _AuthStep.login,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _step != _AuthStep.login) _returnToLogin();
+      },
+      child: content,
+    );
+  }
+
+  void _returnToLogin() {
+    if (mounted && _step != _AuthStep.login) {
+      setState(() => _step = _AuthStep.login);
+    }
+  }
 }
 
 class LoginScreen extends StatefulWidget {
@@ -280,6 +296,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirmationController = TextEditingController();
   bool _busy = false;
   bool _acceptedTerms = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmation = true;
 
   @override
   void dispose() {
@@ -367,30 +385,63 @@ class _RegisterScreenState extends State<RegisterScreen> {
             TextFormField(
               key: const Key('register_password'),
               controller: _passwordController,
-              obscureText: true,
+              obscureText: _obscurePassword,
               enableSuggestions: false,
               autofillHints: const [AutofillHints.newPassword],
               validator: _passwordValidator,
-              decoration: const InputDecoration(
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
                 labelText: 'Contraseña',
-                prefixIcon: Icon(Icons.lock_outline),
-                helperText:
-                    'Mínimo 10 caracteres, mayúscula, minúscula y número.',
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  key: const Key('register_password_visibility'),
+                  tooltip:
+                      _obscurePassword
+                          ? 'Mostrar contraseña'
+                          : 'Ocultar contraseña',
+                  onPressed:
+                      () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
               ),
             ),
+            const SizedBox(height: AppSpacing.sm),
+            _PasswordStrengthIndicator(password: _passwordController.text),
             const SizedBox(height: AppSpacing.md),
             TextFormField(
+              key: const Key('register_password_confirmation'),
               controller: _confirmationController,
-              obscureText: true,
+              obscureText: _obscureConfirmation,
               enableSuggestions: false,
               validator:
                   (value) =>
                       value != _passwordController.text
                           ? 'Las contraseñas no coinciden.'
                           : null,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: 'Confirmar contraseña',
-                prefixIcon: Icon(Icons.lock_reset_outlined),
+                prefixIcon: const Icon(Icons.lock_reset_outlined),
+                suffixIcon: IconButton(
+                  key: const Key('register_confirmation_visibility'),
+                  tooltip:
+                      _obscureConfirmation
+                          ? 'Mostrar confirmación'
+                          : 'Ocultar confirmación',
+                  onPressed:
+                      () => setState(
+                        () => _obscureConfirmation = !_obscureConfirmation,
+                      ),
+                  icon: Icon(
+                    _obscureConfirmation
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: AppSpacing.xl),
@@ -469,6 +520,124 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
+}
+
+enum _PasswordStrength { empty, weak, medium, good, strong }
+
+class _PasswordStrengthIndicator extends StatelessWidget {
+  const _PasswordStrengthIndicator({required this.password});
+
+  final String password;
+
+  @override
+  Widget build(BuildContext context) {
+    final strength = _passwordStrength(password);
+    final scheme = Theme.of(context).colorScheme;
+    final value = switch (strength) {
+      _PasswordStrength.empty => 0.0,
+      _PasswordStrength.weak => 0.25,
+      _PasswordStrength.medium => 0.5,
+      _PasswordStrength.good => 0.75,
+      _PasswordStrength.strong => 1.0,
+    };
+    final label = switch (strength) {
+      _PasswordStrength.empty => 'Sin evaluar',
+      _PasswordStrength.weak => 'Débil',
+      _PasswordStrength.medium => 'Media',
+      _PasswordStrength.good => 'Buena',
+      _PasswordStrength.strong => 'Fuerte',
+    };
+    final color = switch (strength) {
+      _PasswordStrength.empty => scheme.outline,
+      _PasswordStrength.weak => scheme.error,
+      _PasswordStrength.medium =>
+        scheme.brightness == Brightness.light
+            ? AppColors.warningAmber
+            : AppColors.darkWarning,
+      _PasswordStrength.good =>
+        scheme.brightness == Brightness.light
+            ? AppColors.deepLavender
+            : scheme.secondary,
+      _PasswordStrength.strong =>
+        scheme.brightness == Brightness.light
+            ? AppColors.accessibleGreen
+            : scheme.primary,
+    };
+    final guidance = switch (strength) {
+      _PasswordStrength.empty =>
+        'Mínimo 10 caracteres, mayúscula, minúscula y número.',
+      _PasswordStrength.weak =>
+        'Combina mayúsculas, minúsculas, números y más longitud.',
+      _PasswordStrength.medium => 'Completa todos los requisitos mínimos.',
+      _PasswordStrength.good =>
+        'Añade un símbolo y usa 14 caracteres para reforzarla.',
+      _PasswordStrength.strong =>
+        'Buena combinación de longitud y variedad de caracteres.',
+    };
+
+    return Semantics(
+      key: const Key('register_password_strength'),
+      label: 'Seguridad de la contraseña: $label. $guidance',
+      liveRegion: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Seguridad de la contraseña',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              Text(
+                label,
+                key: const Key('register_password_strength_label'),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          LinearProgressIndicator(
+            value: value,
+            minHeight: 7,
+            color: color,
+            backgroundColor: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            guidance,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+_PasswordStrength _passwordStrength(String password) {
+  if (password.isEmpty) return _PasswordStrength.empty;
+  final requirementsMet =
+      <bool>[
+        password.length >= 10,
+        RegExp('[A-Z]').hasMatch(password),
+        RegExp('[a-z]').hasMatch(password),
+        RegExp('[0-9]').hasMatch(password),
+      ].where((value) => value).length;
+
+  if (requirementsMet <= 1) return _PasswordStrength.weak;
+  if (requirementsMet < 4) return _PasswordStrength.medium;
+  final hasStrongLength = password.length >= 14;
+  final hasSymbol = RegExp(r'[^A-Za-z0-9]').hasMatch(password);
+  return hasStrongLength && hasSymbol
+      ? _PasswordStrength.strong
+      : _PasswordStrength.good;
 }
 
 class PasswordRecoveryScreen extends StatefulWidget {

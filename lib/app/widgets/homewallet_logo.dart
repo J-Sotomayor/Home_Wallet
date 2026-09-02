@@ -101,7 +101,7 @@ class HomeWalletStartupGate extends StatefulWidget {
   const HomeWalletStartupGate({
     super.key,
     required this.child,
-    this.minimumDisplayTime = const Duration(milliseconds: 1000),
+    this.minimumDisplayTime = const Duration(milliseconds: 350),
   });
 
   final Widget child;

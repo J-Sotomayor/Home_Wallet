@@ -20,9 +20,7 @@ import 'features/auth/presentation/auth_gate.dart';
 import 'features/onboarding/presentation/welcome_screen.dart';
 import 'firebase_options.dart';
 
-// Directly distributed APKs are not installed by Google Play and therefore
-// cannot be expected to produce a Play Integrity verdict on every device.
-// Enable App Check only for builds distributed through a trusted channel.
+
 const _enableAppCheck = bool.fromEnvironment(
   'HOMEWALLET_ENABLE_APP_CHECK',
   defaultValue: false,
@@ -49,8 +47,7 @@ Future<void> main() async {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
     if (!kIsWeb) {
       FirebaseFirestore.instance.settings = const Settings(
-        // HomeWallet requires a confirmed server connection for writes and
-        // does not advertise or maintain an offline work queue.
+
         persistenceEnabled: false,
       );
       if (_enableAppCheck) {

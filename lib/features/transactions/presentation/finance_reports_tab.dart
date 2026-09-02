@@ -9,7 +9,6 @@ import 'package:intl/intl.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/widgets/app_page_header.dart';
 import '../../../core/errors/app_exception.dart';
-import '../data/finance_repository.dart';
 import '../../households/domain/household_models.dart';
 import '../domain/finance_models.dart';
 import '../domain/monthly_comparison.dart';
@@ -37,16 +36,14 @@ enum _BankSelection {
 class FinanceReportsTab extends StatefulWidget {
   const FinanceReportsTab({
     super.key,
-    required this.householdId,
-    required this.repository,
+    required this.transactions,
     required this.members,
     this.currentUid = '',
     this.currentUserName = '',
     this.householdKind = HouseholdKind.individual,
   });
 
-  final String householdId;
-  final FinanceRepository repository;
+  final Stream<List<FinanceTransaction>> transactions;
   final Stream<List<HouseholdMember>> members;
   final String currentUid;
   final String currentUserName;
@@ -69,7 +66,7 @@ class _FinanceReportsTabState extends State<FinanceReportsTab> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: StreamBuilder<List<FinanceTransaction>>(
-        stream: widget.repository.watchTransactions(widget.householdId),
+        stream: widget.transactions,
         builder: (context, transactionSnapshot) {
           if (transactionSnapshot.hasError) {
             return _ReportError(error: transactionSnapshot.error);

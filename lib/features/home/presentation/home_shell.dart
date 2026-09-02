@@ -58,13 +58,22 @@ class _HomeShellState extends State<HomeShell> {
   _MovementView _movementView = _MovementView.app;
   bool _tutorialQueued = false;
   bool _hasOpenContentRoute = false;
+  final Set<int> _visitedIndexes = {0};
   final _transactionsKey = GlobalKey<_TransactionsTabState>();
   final _contentNavigatorKey = GlobalKey<NavigatorState>();
   late final NavigatorObserver _contentNavigatorObserver;
+  late _ReplayValueStream<Household> _householdStream;
+  late _ReplayValueStream<List<HouseholdMember>> _membersStream;
+  late _ReplayValueStream<List<FinanceTransaction>> _transactionsStream;
+  late _ReplayValueStream<List<FinancePlan>> _plansStream;
+  late _ReplayValueStream<List<FinanceCategory>> _categoriesStream;
+  late _ReplayValueStream<List<RecurringTransaction>> _recurringStream;
+  late _ReplayValueStream<List<SharedExpense>> _sharedExpensesStream;
 
   @override
   void initState() {
     super.initState();
+    _bindStreams();
     _contentNavigatorObserver = _HomeContentNavigatorObserver(
       _setContentRouteOpen,
     );
@@ -72,178 +81,273 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<Household>(
-      stream: widget.services.households.watchHousehold(
-        widget.householdId,
-        widget.user.uid,
-      ),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Scaffold(
-            body: _StreamError(message: _errorText(snapshot.error)),
-          );
-        }
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final household = snapshot.data!;
-        final canContribute = household.canContribute;
-        final pages = [
-          _DashboardTab(
-            user: widget.user,
-            householdId: widget.householdId,
-            services: widget.services,
-            onImportCompleted: _showImportedTransactions,
-            onImportCommitted: () => unawaited(_evaluateSmartAlerts()),
-            onOpenTransactions: () => _selectDestination(1),
-            onOpenPlans: () => _selectDestination(4),
-            onOpenSavings: () => _selectDestination(3),
-            onOpenProfile: () => _openSettings(household),
-            canContribute: canContribute,
-            isCollaborative: household.isCollaborative,
-          ),
-          _TransactionsTab(
-            key: _transactionsKey,
-            user: widget.user,
-            householdId: widget.householdId,
-            services: widget.services,
-            canContribute: canContribute,
-            canManage: household.canManage,
-            isCollaborative: household.isCollaborative,
-            onViewChanged: (view) {
-              if (_movementView != view) {
-                setState(() => _movementView = view);
-              }
-            },
-            onEdit:
-                (transaction) => _showTransactionForm(
-                  context,
-                  existing: transaction,
-                  isCollaborative: household.isCollaborative,
-                ),
-          ),
-          FinanceReportsTab(
-            householdId: widget.householdId,
-            repository: widget.services.finance,
-            members: widget.services.households.watchMembers(
-              widget.householdId,
-            ),
-            currentUid: widget.user.uid,
-            currentUserName: widget.user.displayName,
-            householdKind: household.kind,
-          ),
-          SavingsScreen(
-            householdId: widget.householdId,
-            repository: widget.services.finance,
-            canContribute: canContribute,
-            onAddSaving:
-                () => _showTransactionForm(
-                  context,
-                  initialType: TransactionType.saving,
-                  isCollaborative: household.isCollaborative,
-                ),
-            onOpenPlans: () => _selectDestination(4),
-          ),
-          _PlansTab(
-            user: widget.user,
-            householdId: widget.householdId,
-            services: widget.services,
-            canContribute: canContribute,
-            role: household.roleType,
-            onAddToGoal:
-                (plan, type) => _showTransactionForm(
-                  context,
-                  initialType: type,
-                  initialLinkedPlan: plan,
-                  isCollaborative: household.isCollaborative,
-                ),
-            onRecordBudgetExpense:
-                (plan) => _showTransactionForm(
-                  context,
-                  initialType: TransactionType.expense,
-                  initialCategory: plan.category,
-                  isCollaborative: household.isCollaborative,
-                ),
-          ),
-        ];
+  void didUpdateWidget(covariant HomeShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.householdId != widget.householdId ||
+        oldWidget.user.uid != widget.user.uid ||
+        oldWidget.services.households != widget.services.households ||
+        oldWidget.services.finance != widget.services.finance) {
+      unawaited(_disposeStreams());
+      _bindStreams();
+      _index = 0;
+      _visitedIndexes
+        ..clear()
+        ..add(0);
+    }
+  }
 
-        return Scaffold(
-          body: Navigator(
-            key: _contentNavigatorKey,
-            observers: [_contentNavigatorObserver],
-            pages: [
-              MaterialPage<void>(
-                key: const ValueKey('home_content_root'),
-                child: IndexedStack(index: _index, children: pages),
-              ),
-            ],
-            onDidRemovePage: (_) {},
-          ),
-          floatingActionButton:
-              canContribute && _index == 1 && !_hasOpenContentRoute
-                  ? FloatingActionButton.extended(
-                    onPressed:
+  @override
+  void dispose() {
+    unawaited(_disposeStreams());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<void>(
+      canPop: _index == 0 && !_hasOpenContentRoute,
+      onPopInvokedWithResult: (didPop, _) => _handleSystemBack(didPop),
+      child: StreamBuilder<Household>(
+        stream: _householdStream.stream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Scaffold(
+              body: _StreamError(message: _errorText(snapshot.error)),
+            );
+          }
+          if (!snapshot.hasData) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          final household = snapshot.data!;
+          final canContribute = household.canContribute;
+          final pages = [
+            _DashboardTab(
+              user: widget.user,
+              householdId: widget.householdId,
+              services: widget.services,
+              household: household,
+              transactions: _transactionsStream.stream,
+              plans: _plansStream.stream,
+              members: _membersStream.stream,
+              recurring: _recurringStream.stream,
+              sharedExpenses: _sharedExpensesStream.stream,
+              onImportCompleted: _showImportedTransactions,
+              onImportCommitted: () => unawaited(_evaluateSmartAlerts()),
+              onOpenTransactions: () => _selectDestination(1),
+              onOpenPlans: () => _selectDestination(4),
+              onOpenSavings: () => _selectDestination(3),
+              onOpenProfile: () => _openSettings(household),
+              canContribute: canContribute,
+              isCollaborative: household.isCollaborative,
+            ),
+            _TransactionsTab(
+              key: _transactionsKey,
+              user: widget.user,
+              householdId: widget.householdId,
+              services: widget.services,
+              transactions: _transactionsStream.stream,
+              members: _membersStream.stream,
+              categories: _categoriesStream.stream,
+              canContribute: canContribute,
+              canManage: household.canManage,
+              isCollaborative: household.isCollaborative,
+              onViewChanged: (view) {
+                if (_movementView != view) {
+                  setState(() => _movementView = view);
+                }
+              },
+              onEdit:
+                  (transaction) => _showTransactionForm(
+                    context,
+                    existing: transaction,
+                    isCollaborative: household.isCollaborative,
+                  ),
+            ),
+            FinanceReportsTab(
+              transactions: _transactionsStream.stream,
+              members: _membersStream.stream,
+              currentUid: widget.user.uid,
+              currentUserName: widget.user.displayName,
+              householdKind: household.kind,
+            ),
+            SavingsScreen(
+              plans: _plansStream.stream,
+              transactions: _transactionsStream.stream,
+              canContribute: canContribute,
+              onAddSaving:
+                  () => _showTransactionForm(
+                    context,
+                    initialType: TransactionType.saving,
+                    isCollaborative: household.isCollaborative,
+                  ),
+              onOpenPlans: () => _selectDestination(4),
+            ),
+            _PlansTab(
+              user: widget.user,
+              householdId: widget.householdId,
+              services: widget.services,
+              plans: _plansStream.stream,
+              transactions: _transactionsStream.stream,
+              canContribute: canContribute,
+              role: household.roleType,
+              onAddToGoal:
+                  (plan, type) => _showTransactionForm(
+                    context,
+                    initialType: type,
+                    initialLinkedPlan: plan,
+                    isCollaborative: household.isCollaborative,
+                  ),
+              onRecordBudgetExpense:
+                  (plan) => _showTransactionForm(
+                    context,
+                    initialType: TransactionType.expense,
+                    initialCategory: plan.category,
+                    isCollaborative: household.isCollaborative,
+                  ),
+            ),
+          ];
+
+          return Scaffold(
+            body: Navigator(
+              key: _contentNavigatorKey,
+              observers: [_contentNavigatorObserver],
+              pages: [
+                MaterialPage<void>(
+                  key: const ValueKey('home_content_root'),
+                  child: PopScope<void>(
+                    canPop: _index == 0 && !_hasOpenContentRoute,
+                    child: IndexedStack(
+                      index: _index,
+                      children: List<Widget>.generate(
+                        pages.length,
+                        (pageIndex) =>
+                            _visitedIndexes.contains(pageIndex)
+                                ? pages[pageIndex]
+                                : const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              onDidRemovePage: (_) {},
+            ),
+            floatingActionButton:
+                canContribute && _index == 1 && !_hasOpenContentRoute
+                    ? FloatingActionButton.extended(
+                      onPressed:
+                          _movementView == _MovementView.bank
+                              ? _openBankImport
+                              : () => _showTransactionForm(
+                                context,
+                                isCollaborative: household.isCollaborative,
+                              ),
+                      icon: Icon(
                         _movementView == _MovementView.bank
-                            ? _openBankImport
-                            : () => _showTransactionForm(
-                              context,
-                              isCollaborative: household.isCollaborative,
-                            ),
-                    icon: Icon(
-                      _movementView == _MovementView.bank
-                          ? Icons.upload_file_outlined
-                          : Icons.add_circle_outline,
-                    ),
-                    label: Text(
-                      _movementView == _MovementView.bank
-                          ? 'Importar estado'
-                          : 'Registrar',
-                    ),
-                  )
-                  : null,
-          bottomNavigationBar: NavigationBar(
-            labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
-            selectedIndex: _index,
-            onDestinationSelected: _selectDestination,
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home),
-                label: 'Inicio',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.receipt_long_outlined),
-                selectedIcon: Icon(Icons.receipt_long),
-                label: 'Movs.',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.query_stats_outlined),
-                selectedIcon: Icon(Icons.query_stats),
-                label: 'Reportes',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.savings_outlined),
-                selectedIcon: Icon(Icons.savings),
-                label: 'Ahorros',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.flag_outlined),
-                selectedIcon: Icon(Icons.flag),
-                label: 'Planes',
-              ),
-            ],
-          ),
-        );
-      },
+                            ? Icons.upload_file_outlined
+                            : Icons.add_circle_outline,
+                      ),
+                      label: Text(
+                        _movementView == _MovementView.bank
+                            ? 'Importar estado'
+                            : 'Registrar',
+                      ),
+                    )
+                    : null,
+            bottomNavigationBar: NavigationBar(
+              labelBehavior:
+                  NavigationDestinationLabelBehavior.onlyShowSelected,
+              selectedIndex: _index,
+              onDestinationSelected: _selectDestination,
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home),
+                  label: 'Inicio',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.receipt_long_outlined),
+                  selectedIcon: Icon(Icons.receipt_long),
+                  label: 'Movs.',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.query_stats_outlined),
+                  selectedIcon: Icon(Icons.query_stats),
+                  label: 'Reportes',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.savings_outlined),
+                  selectedIcon: Icon(Icons.savings),
+                  label: 'Ahorros',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.flag_outlined),
+                  selectedIcon: Icon(Icons.flag),
+                  label: 'Planes',
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 
   void _selectDestination(int value) {
     _contentNavigatorKey.currentState?.popUntil((route) => route.isFirst);
-    if (_index != value) setState(() => _index = value);
+    if (_index != value) {
+      setState(() {
+        _visitedIndexes.add(value);
+        _index = value;
+      });
+    }
+  }
+
+  void _bindStreams() {
+    _householdStream = _ReplayValueStream(
+      widget.services.households.watchHousehold(
+        widget.householdId,
+        widget.user.uid,
+      ),
+    );
+    _membersStream = _ReplayValueStream(
+      widget.services.households.watchMembers(widget.householdId),
+    );
+    _transactionsStream = _ReplayValueStream(
+      widget.services.finance.watchTransactions(widget.householdId),
+    );
+    _plansStream = _ReplayValueStream(
+      widget.services.finance.watchPlans(widget.householdId),
+    );
+    _categoriesStream = _ReplayValueStream(
+      widget.services.finance.watchCategories(widget.householdId),
+    );
+    _recurringStream = _ReplayValueStream(
+      widget.services.finance.watchRecurring(widget.householdId),
+    );
+    _sharedExpensesStream = _ReplayValueStream(
+      widget.services.finance.watchSharedExpenses(widget.householdId),
+    );
+  }
+
+  Future<void> _disposeStreams() => Future.wait([
+    _householdStream.dispose(),
+    _membersStream.dispose(),
+    _transactionsStream.dispose(),
+    _plansStream.dispose(),
+    _categoriesStream.dispose(),
+    _recurringStream.dispose(),
+    _sharedExpensesStream.dispose(),
+  ]);
+
+  void _handleSystemBack(bool didPop) {
+    if (didPop) return;
+    if (_hasOpenContentRoute) {
+      _contentNavigatorKey.currentState?.maybePop();
+      return;
+    }
+    if (_index != 0) _selectDestination(0);
   }
 
   void _setContentRouteOpen(bool value) {
@@ -360,8 +464,8 @@ class _HomeShellState extends State<HomeShell> {
     if (notifications == null) return;
     try {
       final values = await Future.wait<Object>([
-        widget.services.finance.watchTransactions(widget.householdId).first,
-        widget.services.finance.watchPlans(widget.householdId).first,
+        _transactionsStream.stream.first,
+        _plansStream.stream.first,
       ]).timeout(const Duration(seconds: 8));
       await notifications.evaluateSmartAlerts(
         uid: widget.user.uid,
@@ -456,11 +560,77 @@ class _HomeContentNavigatorObserver extends NavigatorObserver {
   }
 }
 
+/// Shares one repository subscription and immediately gives late listeners the
+/// most recent value. This avoids repeated Firestore reads/decryption when the
+/// user changes tabs without leaving a newly opened tab waiting for an event.
+class _ReplayValueStream<T> {
+  _ReplayValueStream(this._source) {
+    stream = Stream<T>.multi((listener) {
+      if (_hasValue) listener.add(_latest as T);
+      final updateSubscription = _updates.stream.listen(
+        listener.add,
+        onError: listener.addError,
+        onDone: listener.close,
+      );
+      listener.onCancel = updateSubscription.cancel;
+      _start();
+    }, isBroadcast: true);
+  }
+
+  final Stream<T> _source;
+  final StreamController<T> _updates = StreamController<T>.broadcast(
+    sync: true,
+  );
+  late final Stream<T> stream;
+  StreamSubscription<T>? _sourceSubscription;
+  T? _latest;
+  bool _hasValue = false;
+
+  void _start() {
+    _sourceSubscription ??= _source.listen(
+      (value) {
+        _latest = value;
+        _hasValue = true;
+        _updates.add(value);
+      },
+      onError: _updates.addError,
+      onDone: _updates.close,
+    );
+  }
+
+  Future<void> dispose() async {
+    await _sourceSubscription?.cancel();
+    if (!_updates.isClosed) await _updates.close();
+  }
+}
+
+class _LazyList extends StatelessWidget {
+  const _LazyList({required this.padding, required this.children});
+
+  final EdgeInsetsGeometry padding;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => ListView.builder(
+    padding: padding,
+    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+    cacheExtent: 500,
+    itemCount: children.length,
+    itemBuilder: (context, index) => children[index],
+  );
+}
+
 class _DashboardTab extends StatelessWidget {
   const _DashboardTab({
     required this.user,
     required this.householdId,
     required this.services,
+    required this.household,
+    required this.transactions,
+    required this.plans,
+    required this.members,
+    required this.recurring,
+    required this.sharedExpenses,
     required this.onImportCompleted,
     required this.onImportCommitted,
     required this.onOpenTransactions,
@@ -474,6 +644,12 @@ class _DashboardTab extends StatelessWidget {
   final AuthUser user;
   final String householdId;
   final AppServices services;
+  final Household household;
+  final Stream<List<FinanceTransaction>> transactions;
+  final Stream<List<FinancePlan>> plans;
+  final Stream<List<HouseholdMember>> members;
+  final Stream<List<RecurringTransaction>> recurring;
+  final Stream<List<SharedExpense>> sharedExpenses;
   final VoidCallback onImportCompleted;
   final VoidCallback onImportCommitted;
   final VoidCallback onOpenTransactions;
@@ -486,192 +662,165 @@ class _DashboardTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: StreamBuilder<Household>(
-        stream: services.households.watchHousehold(householdId, user.uid),
-        builder: (context, householdSnapshot) {
-          return StreamBuilder<List<FinanceTransaction>>(
-            stream: services.finance.watchTransactions(householdId),
-            builder: (context, transactionSnapshot) {
-              if (householdSnapshot.hasError || transactionSnapshot.hasError) {
-                return _StreamError(
-                  message: _errorText(
-                    householdSnapshot.error ?? transactionSnapshot.error,
-                  ),
-                );
+      child: StreamBuilder<List<FinanceTransaction>>(
+        stream: transactions,
+        builder: (context, transactionSnapshot) {
+          if (transactionSnapshot.hasError) {
+            return _StreamError(message: _errorText(transactionSnapshot.error));
+          }
+          if (!transactionSnapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final transactions =
+              transactionSnapshot.data!
+                  .where((transaction) => transaction.countsInHouseholdFinances)
+                  .toList();
+          return StreamBuilder<List<FinancePlan>>(
+            stream: plans,
+            builder: (context, planSnapshot) {
+              if (planSnapshot.hasError) {
+                return _StreamError(message: _errorText(planSnapshot.error));
               }
-              if (!householdSnapshot.hasData || !transactionSnapshot.hasData) {
+              if (!planSnapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              final household = householdSnapshot.data!;
-              final transactions =
-                  transactionSnapshot.data!
+              final plans = planSnapshot.data!;
+              final now = DateTime.now();
+              final balances = FinanceBalances.calculate(
+                transactions,
+                plans,
+                currentPeriod: now,
+              );
+              final monthlyTransactions =
+                  transactions
                       .where(
-                        (transaction) => transaction.countsInHouseholdFinances,
+                        (item) =>
+                            item.occurredAt.year == now.year &&
+                            item.occurredAt.month == now.month,
                       )
                       .toList();
-              return StreamBuilder<List<FinancePlan>>(
-                stream: services.finance.watchPlans(householdId),
-                builder: (context, planSnapshot) {
-                  if (planSnapshot.hasError) {
-                    return _StreamError(
-                      message: _errorText(planSnapshot.error),
-                    );
-                  }
-                  if (!planSnapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final plans = planSnapshot.data!;
-                  final now = DateTime.now();
-                  final balances = FinanceBalances.calculate(
-                    transactions,
-                    plans,
-                    currentPeriod: now,
-                  );
-                  final monthlyTransactions =
-                      transactions
-                          .where(
-                            (item) =>
-                                item.occurredAt.year == now.year &&
-                                item.occurredAt.month == now.month,
-                          )
-                          .toList();
-                  return StreamBuilder<List<RecurringTransaction>>(
-                    stream: services.finance.watchRecurring(householdId),
-                    builder: (context, recurringSnapshot) {
-                      return StreamBuilder<List<SharedExpense>>(
-                        stream: services.finance.watchSharedExpenses(
-                          householdId,
-                        ),
-                        builder: (context, sharedSnapshot) {
-                          final activities = _dashboardActivities(
-                            transactions: transactions,
-                            recurring:
-                                recurringSnapshot.data ??
-                                const <RecurringTransaction>[],
-                            shared:
-                                sharedSnapshot.data ?? const <SharedExpense>[],
-                          );
-                          return RefreshIndicator(
-                            onRefresh: () async {
-                              await Future<void>.delayed(
-                                const Duration(milliseconds: 350),
-                              );
-                            },
-                            child: ListView(
-                              padding: const EdgeInsets.fromLTRB(
-                                20,
-                                20,
-                                20,
-                                110,
-                              ),
-                              children: [
-                                _DashboardHeader(
-                                  user: user,
-                                  household: household,
-                                  onOpenProfile: onOpenProfile,
-                                ),
-                                const SizedBox(height: 18),
-                                _AvailableBalanceWithMembers(
-                                  balances: balances,
-                                  monthlyTransactions: monthlyTransactions,
-                                  householdId: householdId,
-                                  user: user,
-                                  repository: services.households,
-                                  canEditIncome: household.canContribute,
-                                ),
-                                if (balances.uncoveredExpenses > 0) ...[
-                                  const SizedBox(height: 12),
-                                  Card(
-                                    color:
-                                        Theme.of(
-                                          context,
-                                        ).colorScheme.errorContainer,
-                                    child: ListTile(
-                                      leading: Icon(
-                                        Icons.warning_amber_rounded,
-                                        color:
-                                            Theme.of(context).colorScheme.error,
-                                      ),
-                                      title: const Text(
-                                        'Tus gastos agotaron el disponible',
-                                      ),
-                                      subtitle: Text(
-                                        'Faltan ${_money(balances.uncoveredExpenses)} por cubrir. Registra el origen real o reduce gastos.',
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 14),
-                                _DashboardPlansSnapshot(
-                                  plans: plans,
-                                  transactions: transactions,
-                                  onOpenPlans: onOpenPlans,
-                                ),
-                                const SizedBox(height: 14),
-                                _HomeEssentialActions(
-                                  canContribute: household.canContribute,
-                                  canInvite: household.canInvite,
-                                  isCollaborative: household.isCollaborative,
-                                  onOpenRecurring:
-                                      () => _openRecurring(context),
-                                  onOpenSharedExpenses:
-                                      () => _openSharedExpenses(
-                                        context,
-                                        household.canManage,
-                                      ),
-                                  onOpenImport: () => _openImport(context),
-                                  onOpenTransactions: onOpenTransactions,
-                                  onOpenSavings: onOpenSavings,
-                                  onOpenFamily:
-                                      household.canInvite
-                                          ? () =>
-                                              _openInvite(context, household)
-                                          : () =>
-                                              _openMembers(context, household),
-                                ),
-                                const SizedBox(height: 14),
-                                FinanceInsights(transactions: transactions),
-                                const SizedBox(height: 24),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'Actividad reciente',
-                                        style:
-                                            Theme.of(
-                                              context,
-                                            ).textTheme.titleLarge,
-                                      ),
-                                    ),
-                                    if (activities.length > 3)
-                                      TextButton(
-                                        onPressed:
-                                            () => _showAllActivities(
-                                              context,
-                                              activities,
-                                            ),
-                                        child: const Text('Mostrar más'),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                if (activities.isEmpty)
-                                  _EmptyState(
-                                    icon: Icons.history_toggle_off_outlined,
-                                    title: 'Aún no hay actividad',
-                                    description:
-                                        household.isCollaborative
-                                            ? 'Aquí verás acciones importantes, como programaciones, divisiones e importaciones.'
-                                            : 'Aquí verás acciones importantes, como programaciones e importaciones.',
-                                  )
-                                else
-                                  ...activities
-                                      .take(3)
-                                      .map(_RecentActivityTile.new),
-                              ],
-                            ),
+              return StreamBuilder<List<RecurringTransaction>>(
+                stream: recurring,
+                builder: (context, recurringSnapshot) {
+                  return StreamBuilder<List<SharedExpense>>(
+                    stream: sharedExpenses,
+                    builder: (context, sharedSnapshot) {
+                      final activities = _dashboardActivities(
+                        transactions: transactions,
+                        recurring:
+                            recurringSnapshot.data ??
+                            const <RecurringTransaction>[],
+                        shared: sharedSnapshot.data ?? const <SharedExpense>[],
+                      );
+                      return RefreshIndicator(
+                        onRefresh: () async {
+                          await Future<void>.delayed(
+                            const Duration(milliseconds: 350),
                           );
                         },
+                        child: _LazyList(
+                          padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
+                          children: [
+                            _DashboardHeader(
+                              user: user,
+                              household: household,
+                              onOpenProfile: onOpenProfile,
+                            ),
+                            const SizedBox(height: 18),
+                            _AvailableBalanceWithMembers(
+                              balances: balances,
+                              monthlyTransactions: monthlyTransactions,
+                              householdId: householdId,
+                              user: user,
+                              repository: services.households,
+                              members: members,
+                              canEditIncome: household.canContribute,
+                            ),
+                            if (balances.uncoveredExpenses > 0) ...[
+                              const SizedBox(height: 12),
+                              Card(
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.errorContainer,
+                                child: ListTile(
+                                  leading: Icon(
+                                    Icons.warning_amber_rounded,
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                  title: const Text(
+                                    'Tus gastos agotaron el disponible',
+                                  ),
+                                  subtitle: Text(
+                                    'Faltan ${_money(balances.uncoveredExpenses)} por cubrir. Registra el origen real o reduce gastos.',
+                                  ),
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 14),
+                            _DashboardPlansSnapshot(
+                              plans: plans,
+                              transactions: transactions,
+                              onOpenPlans: onOpenPlans,
+                            ),
+                            const SizedBox(height: 14),
+                            _HomeEssentialActions(
+                              canContribute: household.canContribute,
+                              canInvite: household.canInvite,
+                              isCollaborative: household.isCollaborative,
+                              onOpenRecurring: () => _openRecurring(context),
+                              onOpenSharedExpenses:
+                                  () => _openSharedExpenses(
+                                    context,
+                                    household.canManage,
+                                  ),
+                              onOpenImport: () => _openImport(context),
+                              onOpenTransactions: onOpenTransactions,
+                              onOpenSavings: onOpenSavings,
+                              onOpenFamily:
+                                  household.canInvite
+                                      ? () => _openInvite(context, household)
+                                      : () => _openMembers(context, household),
+                            ),
+                            const SizedBox(height: 14),
+                            FinanceInsights(transactions: transactions),
+                            const SizedBox(height: 24),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Actividad reciente',
+                                    style:
+                                        Theme.of(context).textTheme.titleLarge,
+                                  ),
+                                ),
+                                if (activities.length > 3)
+                                  TextButton(
+                                    onPressed:
+                                        () => _showAllActivities(
+                                          context,
+                                          activities,
+                                        ),
+                                    child: const Text('Mostrar más'),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            if (activities.isEmpty)
+                              _EmptyState(
+                                icon: Icons.history_toggle_off_outlined,
+                                title: 'Aún no hay actividad',
+                                description:
+                                    household.isCollaborative
+                                        ? 'Aquí verás acciones importantes, como programaciones, divisiones e importaciones.'
+                                        : 'Aquí verás acciones importantes, como programaciones e importaciones.',
+                              )
+                            else
+                              ...activities
+                                  .take(3)
+                                  .map(_RecentActivityTile.new),
+                          ],
+                        ),
                       );
                     },
                   );
@@ -966,6 +1115,7 @@ class _AvailableBalanceWithMembers extends StatelessWidget {
     required this.householdId,
     required this.user,
     required this.repository,
+    required this.members,
     required this.canEditIncome,
   });
 
@@ -974,11 +1124,12 @@ class _AvailableBalanceWithMembers extends StatelessWidget {
   final String householdId;
   final AuthUser user;
   final HouseholdRepository repository;
+  final Stream<List<HouseholdMember>> members;
   final bool canEditIncome;
 
   @override
   Widget build(BuildContext context) => StreamBuilder<List<HouseholdMember>>(
-    stream: repository.watchMembers(householdId),
+    stream: members,
     builder:
         (context, snapshot) => _AvailableBalanceCard(
           balances: balances,
@@ -1874,6 +2025,9 @@ class _TransactionsTab extends StatefulWidget {
     required this.user,
     required this.householdId,
     required this.services,
+    required this.transactions,
+    required this.members,
+    required this.categories,
     required this.canContribute,
     required this.canManage,
     required this.isCollaborative,
@@ -1884,6 +2038,9 @@ class _TransactionsTab extends StatefulWidget {
   final AuthUser user;
   final String householdId;
   final AppServices services;
+  final Stream<List<FinanceTransaction>> transactions;
+  final Stream<List<HouseholdMember>> members;
+  final Stream<List<FinanceCategory>> categories;
   final bool canContribute;
   final bool canManage;
   final bool isCollaborative;
@@ -1906,6 +2063,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   DateTime _appHistoryStart = DateTime.now();
   bool _showAdvanced = false;
   int _visibleLimit = _pageSize;
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -1916,15 +2074,17 @@ class _TransactionsTabState extends State<_TransactionsTab> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.removeListener(_refresh);
     _searchController.dispose();
     super.dispose();
   }
 
   void _refresh() {
-    if (mounted) {
-      setState(() => _visibleLimit = _pageSize);
-    }
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (mounted) setState(() => _visibleLimit = _pageSize);
+    });
   }
 
   void showImportedOnly() {
@@ -1968,7 +2128,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: StreamBuilder<List<FinanceTransaction>>(
-        stream: widget.services.finance.watchTransactions(widget.householdId),
+        stream: widget.transactions,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return _StreamError(message: _errorText(snapshot.error));
@@ -1981,13 +2141,11 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                   .where((transaction) => transaction.countsInHouseholdFinances)
                   .toList();
           return StreamBuilder<List<HouseholdMember>>(
-            stream: widget.services.households.watchMembers(widget.householdId),
+            stream: widget.members,
             builder: (context, memberSnapshot) {
               final members = memberSnapshot.data ?? const <HouseholdMember>[];
               return StreamBuilder<List<FinanceCategory>>(
-                stream: widget.services.finance.watchCategories(
-                  widget.householdId,
-                ),
+                stream: widget.categories,
                 builder: (context, categorySnapshot) {
                   final sectionTransactions =
                       all.where((item) {
@@ -2046,7 +2204,7 @@ class _TransactionsTabState extends State<_TransactionsTab> {
                             item.description.toLowerCase().contains(query) ||
                             item.category.toLowerCase().contains(query);
                       }).toList();
-                  return ListView(
+                  return _LazyList(
                     padding: const EdgeInsets.fromLTRB(20, 22, 20, 110),
                     children: [
                       AppPageHeader(
@@ -2855,6 +3013,8 @@ class _PlansTab extends StatelessWidget {
     required this.user,
     required this.householdId,
     required this.services,
+    required this.plans,
+    required this.transactions,
     required this.canContribute,
     required this.role,
     required this.onAddToGoal,
@@ -2864,6 +3024,8 @@ class _PlansTab extends StatelessWidget {
   final AuthUser user;
   final String householdId;
   final AppServices services;
+  final Stream<List<FinancePlan>> plans;
+  final Stream<List<FinanceTransaction>> transactions;
   final bool canContribute;
   final HouseholdRole role;
   final Future<void> Function(FinancePlan, TransactionType) onAddToGoal;
@@ -2873,7 +3035,7 @@ class _PlansTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       child: StreamBuilder<List<FinancePlan>>(
-        stream: services.finance.watchPlans(householdId),
+        stream: plans,
         builder: (context, planSnapshot) {
           if (planSnapshot.hasError) {
             return _StreamError(message: _errorText(planSnapshot.error));
@@ -2883,7 +3045,7 @@ class _PlansTab extends StatelessWidget {
           }
           final plans = planSnapshot.data!;
           return StreamBuilder<List<FinanceTransaction>>(
-            stream: services.finance.watchTransactions(householdId),
+            stream: transactions,
             builder: (context, transactionSnapshot) {
               if (transactionSnapshot.hasError) {
                 return _StreamError(
@@ -2903,7 +3065,7 @@ class _PlansTab extends StatelessWidget {
                       .where((plan) => plan.kind == FinancePlanKind.goal)
                       .toList();
               final isJunior = role == HouseholdRole.junior;
-              return ListView(
+              return _LazyList(
                 padding: const EdgeInsets.fromLTRB(20, 22, 20, 40),
                 children: [
                   AppPageHeader(
@@ -3729,10 +3891,12 @@ class _ProfileTabState extends State<_ProfileTab> {
   bool? _biometricEnabled;
   bool? _notificationsEnabled;
   bool _signingOut = false;
+  late Stream<Household> _householdStream;
 
   @override
   void initState() {
     super.initState();
+    _bindHouseholdStream();
     widget.services.biometricLock.isEnabled(widget.user.uid).then((value) {
       if (mounted) setState(() => _biometricEnabled = value);
     });
@@ -3742,16 +3906,30 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   @override
+  void didUpdateWidget(covariant _ProfileTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.householdId != widget.householdId ||
+        oldWidget.user.uid != widget.user.uid ||
+        oldWidget.services.households != widget.services.households) {
+      _bindHouseholdStream();
+    }
+  }
+
+  void _bindHouseholdStream() {
+    _householdStream = widget.services.households.watchHousehold(
+      widget.householdId,
+      widget.user.uid,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: StreamBuilder<Household>(
-        stream: widget.services.households.watchHousehold(
-          widget.householdId,
-          widget.user.uid,
-        ),
+        stream: _householdStream,
         builder: (context, snapshot) {
           final currentHousehold = snapshot.data ?? widget.household;
-          return ListView(
+          return _LazyList(
             padding: const EdgeInsets.fromLTRB(20, 22, 20, 40),
             children: [
               const AppPageHeader(

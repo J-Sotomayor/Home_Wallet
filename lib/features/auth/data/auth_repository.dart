@@ -200,14 +200,24 @@ class FirebaseAuthRepository implements AuthRepository {
       await _ensureProfile();
       await _auth.currentUser?.getIdToken(true);
     } on GoogleSignInException catch (error) {
+      final description = error.description?.toLowerCase() ?? '';
+      final hasNoGoogleCredential =
+          description.contains('no credential available') ||
+          description.contains('no matching credentials');
       final message = switch (error.code) {
         GoogleSignInExceptionCode.canceled =>
           'Se canceló el acceso con Google.',
+        GoogleSignInExceptionCode.unknownError when hasNoGoogleCredential =>
+          'No hay una cuenta de Google disponible en este dispositivo. Agrégala en Android y vuelve a intentarlo.',
+        GoogleSignInExceptionCode.interrupted =>
+          'El acceso con Google se interrumpió. Vuelve a intentarlo.',
         GoogleSignInExceptionCode.clientConfigurationError ||
         GoogleSignInExceptionCode.providerConfigurationError =>
           'Google no está configurado correctamente para esta aplicación.',
         GoogleSignInExceptionCode.uiUnavailable =>
           'No se pudo abrir el selector de cuentas de Google.',
+        GoogleSignInExceptionCode.userMismatch =>
+          'La cuenta elegida no coincide con la sesión de Google activa.',
         _ => 'No se pudo iniciar sesión con Google. Inténtalo nuevamente.',
       };
       throw AppException(message, code: error.code.name);

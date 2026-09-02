@@ -2,22 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../../app/widgets/app_page_header.dart';
-import '../data/finance_repository.dart';
 import '../domain/finance_balances.dart';
 import '../domain/finance_models.dart';
 
 class SavingsScreen extends StatelessWidget {
   const SavingsScreen({
     super.key,
-    required this.householdId,
-    required this.repository,
+    required this.plans,
+    required this.transactions,
     required this.canContribute,
     required this.onAddSaving,
     required this.onOpenPlans,
   });
 
-  final String householdId;
-  final FinanceRepository repository;
+  final Stream<List<FinancePlan>> plans;
+  final Stream<List<FinanceTransaction>> transactions;
   final bool canContribute;
   final VoidCallback onAddSaving;
   final VoidCallback onOpenPlans;
@@ -26,10 +25,10 @@ class SavingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       child: StreamBuilder<List<FinancePlan>>(
-        stream: repository.watchPlans(householdId),
+        stream: plans,
         builder:
             (context, planSnapshot) => StreamBuilder<List<FinanceTransaction>>(
-              stream: repository.watchTransactions(householdId),
+              stream: transactions,
               builder: (context, transactionSnapshot) {
                 if (planSnapshot.hasError || transactionSnapshot.hasError) {
                   return const Center(

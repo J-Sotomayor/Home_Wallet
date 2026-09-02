@@ -51,90 +51,103 @@ class _AppTutorialScreenState extends State<AppTutorialScreen> {
   @override
   Widget build(BuildContext context) {
     final last = _index == _steps.length - 1;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Conoce HomeWallet'),
-        automaticallyImplyLeading: false,
-        actions: [
-          TextButton(
-            onPressed: _busy ? null : _finish,
-            child: const Text('Saltar'),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: PageView.builder(
-                controller: _controller,
-                itemCount: _steps.length,
-                onPageChanged: (value) => setState(() => _index = value),
-                itemBuilder: (context, index) {
-                  final step = _steps[index];
-                  return Padding(
-                    padding: const EdgeInsets.all(30),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircleAvatar(
-                          radius: 76,
-                          backgroundColor:
-                              Theme.of(context).colorScheme.primaryContainer,
-                          child: Icon(
-                            step.icon,
-                            size: 76,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                        const SizedBox(height: 34),
-                        Text(
-                          step.title,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          step.description,
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-            Text(
-              '${_index + 1} de ${_steps.length}',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed:
-                      _busy
-                          ? null
-                          : () {
-                            if (last) {
-                              _finish();
-                            } else {
-                              _controller.nextPage(
-                                duration: const Duration(milliseconds: 250),
-                                curve: Curves.easeOut,
-                              );
-                            }
-                          },
-                  icon: Icon(last ? Icons.check : Icons.arrow_forward),
-                  label: Text(last ? 'Listo, empezar' : 'Siguiente'),
-                ),
-              ),
+    return PopScope<void>(
+      canPop: !_busy && _index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && !_busy && _index > 0) _previousPage();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Conoce HomeWallet'),
+          automaticallyImplyLeading: false,
+          actions: [
+            TextButton(
+              onPressed: _busy ? null : _finish,
+              child: const Text('Saltar'),
             ),
           ],
         ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: PageView.builder(
+                  controller: _controller,
+                  itemCount: _steps.length,
+                  onPageChanged: (value) => setState(() => _index = value),
+                  itemBuilder: (context, index) {
+                    final step = _steps[index];
+                    return Padding(
+                      padding: const EdgeInsets.all(30),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircleAvatar(
+                            radius: 76,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primaryContainer,
+                            child: Icon(
+                              step.icon,
+                              size: 76,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 34),
+                          Text(
+                            step.title,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.headlineSmall,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            step.description,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Text(
+                '${_index + 1} de ${_steps.length}',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed:
+                        _busy
+                            ? null
+                            : () {
+                              if (last) {
+                                _finish();
+                              } else {
+                                _controller.nextPage(
+                                  duration: const Duration(milliseconds: 250),
+                                  curve: Curves.easeOut,
+                                );
+                              }
+                            },
+                    icon: Icon(last ? Icons.check : Icons.arrow_forward),
+                    label: Text(last ? 'Listo, empezar' : 'Siguiente'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
+    );
+  }
+
+  void _previousPage() {
+    _controller.previousPage(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
     );
   }
 

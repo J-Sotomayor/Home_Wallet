@@ -90,77 +90,90 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   @override
   Widget build(BuildContext context) {
     final last = _page == _pages.length - 1;
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 12, 12, 0),
-              child: Row(
-                children: [
-                  const HomeWalletLogo(width: 110, height: 100),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: _busy ? null : _finish,
-                    child: const Text('Saltar'),
-                  ),
-                ],
+    return PopScope<void>(
+      canPop: !_busy && _page == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && !_busy && _page > 0) _previousPage();
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 12, 12, 0),
+                child: Row(
+                  children: [
+                    const HomeWalletLogo(width: 110, height: 100),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: _busy ? null : _finish,
+                      child: const Text('Saltar'),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Expanded(
-              child: PageView.builder(
-                controller: _controller,
-                itemCount: _pages.length,
-                onPageChanged: (value) => setState(() => _page = value),
-                itemBuilder:
-                    (context, index) => _WelcomePage(data: _pages[index]),
+              Expanded(
+                child: PageView.builder(
+                  controller: _controller,
+                  itemCount: _pages.length,
+                  onPageChanged: (value) => setState(() => _page = value),
+                  itemBuilder:
+                      (context, index) => _WelcomePage(data: _pages[index]),
+                ),
               ),
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(
-                _pages.length,
-                (index) => AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: index == _page ? 22 : 7,
-                  height: 7,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    color:
-                        index == _page
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  _pages.length,
+                  (index) => AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: index == _page ? 22 : 7,
+                    height: 7,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color:
+                          index == _page
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 20, 24, 26),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed:
-                      _busy
-                          ? null
-                          : () {
-                            if (last) {
-                              _finish();
-                            } else {
-                              _controller.nextPage(
-                                duration: const Duration(milliseconds: 280),
-                                curve: Curves.easeOut,
-                              );
-                            }
-                          },
-                  icon: Icon(last ? Icons.login : Icons.arrow_forward),
-                  label: Text(last ? 'Empezar' : 'Siguiente'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 26),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed:
+                        _busy
+                            ? null
+                            : () {
+                              if (last) {
+                                _finish();
+                              } else {
+                                _controller.nextPage(
+                                  duration: const Duration(milliseconds: 280),
+                                  curve: Curves.easeOut,
+                                );
+                              }
+                            },
+                    icon: Icon(last ? Icons.login : Icons.arrow_forward),
+                    label: Text(last ? 'Empezar' : 'Siguiente'),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  void _previousPage() {
+    _controller.previousPage(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
     );
   }
 
