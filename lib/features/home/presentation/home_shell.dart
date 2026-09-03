@@ -41,6 +41,7 @@ class HomeShell extends StatefulWidget {
     required this.services,
     required this.themeController,
     required this.onSignOut,
+    this.showInitialGuide = false,
   });
 
   final AuthUser user;
@@ -48,19 +49,34 @@ class HomeShell extends StatefulWidget {
   final AppServices services;
   final ThemeController themeController;
   final Future<void> Function() onSignOut;
+  final bool showInitialGuide;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
 
 class _HomeShellState extends State<HomeShell> {
+  static const _guideStepCount = 9;
+
   int _index = 0;
   _MovementView _movementView = _MovementView.app;
   bool _tutorialQueued = false;
   bool _hasOpenContentRoute = false;
+  int? _guideStepIndex;
+  Rect? _guideTargetRect;
+  String? _guideCompletionKey;
   final Set<int> _visitedIndexes = {0};
   final _transactionsKey = GlobalKey<_TransactionsTabState>();
   final _contentNavigatorKey = GlobalKey<NavigatorState>();
+  final _incomeGuideKey = GlobalKey(debugLabel: 'guide_monthly_income');
+  final _balanceGuideKey = GlobalKey(debugLabel: 'guide_available_balance');
+  final _movementNavGuideKey = GlobalKey(debugLabel: 'guide_movements_nav');
+  final _registerGuideKey = GlobalKey(debugLabel: 'guide_register_movement');
+  final _plansNavGuideKey = GlobalKey(debugLabel: 'guide_plans_nav');
+  final _createPlanGuideKey = GlobalKey(debugLabel: 'guide_create_plan');
+  final _savingsNavGuideKey = GlobalKey(debugLabel: 'guide_savings_nav');
+  final _reportsNavGuideKey = GlobalKey(debugLabel: 'guide_reports_nav');
+  final _profileGuideKey = GlobalKey(debugLabel: 'guide_profile');
   late final NavigatorObserver _contentNavigatorObserver;
   late _ReplayValueStream<Household> _householdStream;
   late _ReplayValueStream<List<HouseholdMember>> _membersStream;
@@ -124,6 +140,9 @@ class _HomeShellState extends State<HomeShell> {
           final canContribute = household.canContribute;
           final pages = [
             _DashboardTab(
+              incomeGuideKey: _incomeGuideKey,
+              balanceGuideKey: _balanceGuideKey,
+              profileGuideKey: _profileGuideKey,
               user: widget.user,
               householdId: widget.householdId,
               services: widget.services,
@@ -185,6 +204,7 @@ class _HomeShellState extends State<HomeShell> {
               onOpenPlans: () => _selectDestination(4),
             ),
             _PlansTab(
+              createPlanGuideKey: _createPlanGuideKey,
               user: widget.user,
               householdId: widget.householdId,
               services: widget.services,
@@ -209,7 +229,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
           ];
 
-          return Scaffold(
+          final scaffold = Scaffold(
             body: Navigator(
               key: _contentNavigatorKey,
               observers: [_contentNavigatorObserver],
@@ -236,6 +256,7 @@ class _HomeShellState extends State<HomeShell> {
             floatingActionButton:
                 canContribute && _index == 1 && !_hasOpenContentRoute
                     ? FloatingActionButton.extended(
+                      key: _registerGuideKey,
                       onPressed:
                           _movementView == _MovementView.bank
                               ? _openBankImport
@@ -260,34 +281,67 @@ class _HomeShellState extends State<HomeShell> {
                   NavigationDestinationLabelBehavior.onlyShowSelected,
               selectedIndex: _index,
               onDestinationSelected: _selectDestination,
-              destinations: const [
+              destinations: [
                 NavigationDestination(
+                  key: const ValueKey('home_navigation'),
                   icon: Icon(Icons.home_outlined),
                   selectedIcon: Icon(Icons.home),
                   label: 'Inicio',
                 ),
                 NavigationDestination(
+                  key: _movementNavGuideKey,
                   icon: Icon(Icons.receipt_long_outlined),
                   selectedIcon: Icon(Icons.receipt_long),
                   label: 'Movs.',
                 ),
                 NavigationDestination(
+                  key: _reportsNavGuideKey,
                   icon: Icon(Icons.query_stats_outlined),
                   selectedIcon: Icon(Icons.query_stats),
                   label: 'Reportes',
                 ),
                 NavigationDestination(
+                  key: _savingsNavGuideKey,
                   icon: Icon(Icons.savings_outlined),
                   selectedIcon: Icon(Icons.savings),
                   label: 'Ahorros',
                 ),
                 NavigationDestination(
+                  key: _plansNavGuideKey,
                   icon: Icon(Icons.flag_outlined),
                   selectedIcon: Icon(Icons.flag),
                   label: 'Planes',
                 ),
               ],
             ),
+          );
+          final guideIndex = _guideStepIndex;
+          final guideRect = _guideTargetRect;
+          if (guideIndex == null || guideRect == null) return scaffold;
+          final guide = _guideData(guideIndex);
+          return Stack(
+            children: [
+              scaffold,
+              Positioned.fill(
+                child: AppGuideOverlay(
+                  targetRect: guideRect,
+                  currentStep: guideIndex,
+                  totalSteps: _guideStepCount,
+                  icon: guide.icon,
+                  title: guide.title,
+                  description: guide.description,
+                  onPrevious:
+                      guideIndex == 0
+                          ? null
+                          : () => _showGuideStep(guideIndex - 1),
+                  onNext:
+                      guideIndex == _guideStepCount - 1
+                          ? _finishFeatureGuide
+                          : () => _showGuideStep(guideIndex + 1),
+                  onSkip: _finishFeatureGuide,
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -441,22 +495,173 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _showTutorialOnce() async {
     if (_tutorialQueued || !mounted) return;
     _tutorialQueued = true;
+    if (!widget.showInitialGuide) return;
     final preferences = await SharedPreferences.getInstance();
-    final key = 'tutorial.completed.v1.${widget.user.uid}';
-    if (!mounted || preferences.getBool(key) == true) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder:
-            (_) => AppTutorialScreen(
-              onFinished: () async => preferences.setBool(key, true),
-            ),
-      ),
-    );
+    final key = 'feature_guide.completed.v1.${widget.user.uid}';
+    final alreadyShown = preferences.getBool(key) == true;
+    if (!mounted ||
+        !FeatureGuideEligibility.shouldOpenAutomatically(
+          completedOnboardingThisSession: widget.showInitialGuide,
+          wasAlreadyShown: alreadyShown,
+        )) {
+      return;
+    }
+    _guideCompletionKey = key;
+    _showGuideStep(0);
   }
 
   Future<void> _startExperience() async {
     await _showTutorialOnce();
+  }
+
+  void _restartFeatureGuide() {
+    _contentNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+    _guideCompletionKey = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showGuideStep(0));
+  }
+
+  void _showGuideStep(int step) {
+    if (!mounted || step < 0 || step >= _guideStepCount) return;
+    final destination = _guideDestination(step);
+    setState(() {
+      _guideStepIndex = step;
+      _guideTargetRect = null;
+      _visitedIndexes.add(destination);
+      _index = destination;
+    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _measureGuideTarget(step),
+    );
+  }
+
+  Future<void> _measureGuideTarget(int step, [int attempt = 0]) async {
+    if (!mounted || _guideStepIndex != step) return;
+    final key = _guideTargetKey(step, allowFallback: attempt >= 40);
+    final targetContext = key.currentContext;
+    final renderObject = targetContext?.findRenderObject();
+    if (renderObject is RenderBox &&
+        renderObject.hasSize &&
+        renderObject.attached) {
+      final rect = renderObject.localToGlobal(Offset.zero) & renderObject.size;
+      if (mounted && _guideStepIndex == step) {
+        setState(() => _guideTargetRect = rect);
+      }
+      return;
+    }
+    if (attempt >= 50) {
+      final next = step + 1;
+      if (next < _guideStepCount) {
+        _showGuideStep(next);
+      } else {
+        _finishFeatureGuide();
+      }
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await _measureGuideTarget(step, attempt + 1);
+  }
+
+  GlobalKey _guideTargetKey(int step, {required bool allowFallback}) {
+    return switch (step) {
+      0 => _incomeGuideKey,
+      1 => _movementNavGuideKey,
+      2 =>
+        allowFallback && _registerGuideKey.currentContext == null
+            ? _movementNavGuideKey
+            : _registerGuideKey,
+      3 => _plansNavGuideKey,
+      4 =>
+        allowFallback && _createPlanGuideKey.currentContext == null
+            ? _plansNavGuideKey
+            : _createPlanGuideKey,
+      5 => _savingsNavGuideKey,
+      6 => _reportsNavGuideKey,
+      7 => _profileGuideKey,
+      _ => _balanceGuideKey,
+    };
+  }
+
+  int _guideDestination(int step) => switch (step) {
+    0 || 1 => 0,
+    2 || 3 => 1,
+    4 || 5 => 4,
+    6 => 3,
+    7 || 8 => 0,
+    _ => 0,
+  };
+
+  _HomeGuideData _guideData(int step) => switch (step) {
+    0 => const _HomeGuideData(
+      icon: Icons.payments_outlined,
+      title: 'Primero, registra tu ingreso mensual',
+      description:
+          'En “Mi ingreso” escribe cuánto recibes neto al mes. Este dato sirve como referencia para repartir gastos; luego registra cada sueldo recibido en Movs. para que aumente el disponible.',
+    ),
+    1 => const _HomeGuideData(
+      icon: Icons.receipt_long_outlined,
+      title: 'Registra lo que realmente entra y sale',
+      description:
+          'En Movs. añade el sueldo cuando lo recibas y cada pago o compra. El saldo solo cambia con estos movimientos reales.',
+    ),
+    2 => const _HomeGuideData(
+      icon: Icons.auto_awesome,
+      title: 'La categoría se completa por ti',
+      description:
+          'Toca Registrar y describe el movimiento, por ejemplo “comprar hamburguesa”. HomeWallet sugerirá Alimentación; puedes cambiarla y también aprenderá de tus categorías personalizadas.',
+    ),
+    3 => const _HomeGuideData(
+      icon: Icons.flag_outlined,
+      title: 'Aquí están tus presupuestos y metas',
+      description:
+          'Planes reúne los límites mensuales de gasto y las metas para ahorrar. El siguiente paso te mostrará dónde crear el primero.',
+    ),
+    4 => const _HomeGuideData(
+      icon: Icons.pie_chart_outline,
+      title: 'Crea primero un presupuesto mensual',
+      description:
+          'Pulsa Crear plan, elige Presupuesto mensual, asigna una categoría y define el límite. Cada gasto de esa categoría actualizará el avance automáticamente.',
+    ),
+    5 => const _HomeGuideData(
+      icon: Icons.savings_outlined,
+      title: 'Separa dinero en Ahorros',
+      description:
+          'Aquí verás todo lo apartado. Puedes guardarlo como ahorro libre o vincularlo a una meta concreta creada en Planes.',
+    ),
+    6 => const _HomeGuideData(
+      icon: Icons.query_stats_outlined,
+      title: 'Comprueba tu avance en Reportes',
+      description:
+          'Compara meses y revisa el destino de tus gastos. Los filtros y exportaciones te ayudan a entender el espacio completo o solo tus datos.',
+    ),
+    7 => const _HomeGuideData(
+      icon: Icons.person_outline,
+      title: 'Personaliza y administra tu espacio',
+      description:
+          'Desde tu perfil puedes crear categorías, cambiar de espacio, gestionar integrantes, configurar seguridad y volver a abrir esta guía.',
+    ),
+    _ => const _HomeGuideData(
+      icon: Icons.account_balance_wallet_outlined,
+      title: 'Todo termina reflejado aquí',
+      description:
+          'El disponible se calcula con tus ingresos registrados menos gastos, ahorros y aportes a metas. Toca la tarjeta para ver el desglose cuando lo necesites.',
+    ),
+  };
+
+  Future<void> _finishFeatureGuide() async {
+    final completionKey = _guideCompletionKey;
+    if (mounted) {
+      setState(() {
+        _guideStepIndex = null;
+        _guideTargetRect = null;
+        _guideCompletionKey = null;
+        _visitedIndexes.add(0);
+        _index = 0;
+      });
+    }
+    if (completionKey != null) {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setBool(completionKey, true);
+    }
   }
 
   Future<void> _evaluateSmartAlerts() async {
@@ -494,6 +699,7 @@ class _HomeShellState extends State<HomeShell> {
                 themeController: widget.themeController,
                 household: household,
                 onSignOut: widget.onSignOut,
+                onOpenTutorial: _restartFeatureGuide,
               ),
             ),
       ),
@@ -563,6 +769,18 @@ class _HomeContentNavigatorObserver extends NavigatorObserver {
 /// Shares one repository subscription and immediately gives late listeners the
 /// most recent value. This avoids repeated Firestore reads/decryption when the
 /// user changes tabs without leaving a newly opened tab waiting for an event.
+class _HomeGuideData {
+  const _HomeGuideData({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+}
+
 class _ReplayValueStream<T> {
   _ReplayValueStream(this._source) {
     stream = Stream<T>.multi((listener) {
@@ -622,6 +840,9 @@ class _LazyList extends StatelessWidget {
 
 class _DashboardTab extends StatelessWidget {
   const _DashboardTab({
+    required this.incomeGuideKey,
+    required this.balanceGuideKey,
+    required this.profileGuideKey,
     required this.user,
     required this.householdId,
     required this.services,
@@ -641,6 +862,9 @@ class _DashboardTab extends StatelessWidget {
     required this.isCollaborative,
   });
 
+  final Key incomeGuideKey;
+  final Key balanceGuideKey;
+  final Key profileGuideKey;
   final AuthUser user;
   final String householdId;
   final AppServices services;
@@ -722,12 +946,15 @@ class _DashboardTab extends StatelessWidget {
                           padding: const EdgeInsets.fromLTRB(20, 20, 20, 110),
                           children: [
                             _DashboardHeader(
+                              profileGuideKey: profileGuideKey,
                               user: user,
                               household: household,
                               onOpenProfile: onOpenProfile,
                             ),
                             const SizedBox(height: 18),
                             _AvailableBalanceWithMembers(
+                              incomeGuideKey: incomeGuideKey,
+                              balanceGuideKey: balanceGuideKey,
                               balances: balances,
                               monthlyTransactions: monthlyTransactions,
                               householdId: householdId,
@@ -1037,11 +1264,13 @@ class _RecentActivityTile extends StatelessWidget {
 
 class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader({
+    required this.profileGuideKey,
     required this.user,
     required this.household,
     required this.onOpenProfile,
   });
 
+  final Key profileGuideKey;
   final AuthUser user;
   final Household household;
   final VoidCallback onOpenProfile;
@@ -1094,13 +1323,16 @@ class _DashboardHeader extends StatelessWidget {
             ],
           ),
         ),
-        Tooltip(
-          message: 'Abrir mi perfil',
-          child: InkWell(
-            key: const Key('open_profile_avatar'),
-            customBorder: const CircleBorder(),
-            onTap: onOpenProfile,
-            child: _ProfileAvatar(user: user),
+        KeyedSubtree(
+          key: profileGuideKey,
+          child: Tooltip(
+            message: 'Abrir mi perfil',
+            child: InkWell(
+              key: const Key('open_profile_avatar'),
+              customBorder: const CircleBorder(),
+              onTap: onOpenProfile,
+              child: _ProfileAvatar(user: user),
+            ),
           ),
         ),
       ],
@@ -1110,6 +1342,8 @@ class _DashboardHeader extends StatelessWidget {
 
 class _AvailableBalanceWithMembers extends StatelessWidget {
   const _AvailableBalanceWithMembers({
+    required this.incomeGuideKey,
+    required this.balanceGuideKey,
     required this.balances,
     required this.monthlyTransactions,
     required this.householdId,
@@ -1119,6 +1353,8 @@ class _AvailableBalanceWithMembers extends StatelessWidget {
     required this.canEditIncome,
   });
 
+  final Key incomeGuideKey;
+  final Key balanceGuideKey;
   final FinanceBalances balances;
   final List<FinanceTransaction> monthlyTransactions;
   final String householdId;
@@ -1132,6 +1368,8 @@ class _AvailableBalanceWithMembers extends StatelessWidget {
     stream: members,
     builder:
         (context, snapshot) => _AvailableBalanceCard(
+          incomeGuideKey: incomeGuideKey,
+          balanceGuideKey: balanceGuideKey,
           balances: balances,
           monthlyTransactions: monthlyTransactions,
           members: snapshot.data ?? const <HouseholdMember>[],
@@ -1240,6 +1478,8 @@ class _AvailableBalanceWithMembers extends StatelessWidget {
 
 class _AvailableBalanceCard extends StatelessWidget {
   const _AvailableBalanceCard({
+    required this.incomeGuideKey,
+    required this.balanceGuideKey,
     required this.balances,
     required this.monthlyTransactions,
     required this.members,
@@ -1247,6 +1487,8 @@ class _AvailableBalanceCard extends StatelessWidget {
     required this.onEditIncome,
   });
 
+  final Key incomeGuideKey;
+  final Key balanceGuideKey;
   final FinanceBalances balances;
   final List<FinanceTransaction> monthlyTransactions;
   final List<HouseholdMember> members;
@@ -1265,113 +1507,117 @@ class _AvailableBalanceCard extends StatelessWidget {
     return Semantics(
       button: true,
       label: 'Ver cómo se calcula el dinero disponible',
-      child: GestureDetector(
-        key: const Key('available_balance_card'),
-        onTap: () => _showBreakdown(context, reserved),
-        child: Container(
-          padding: const EdgeInsets.all(22),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.primaryBlue, AppColors.primaryBlueDark],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+      child: KeyedSubtree(
+        key: balanceGuideKey,
+        child: GestureDetector(
+          key: const Key('available_balance_card'),
+          onTap: () => _showBreakdown(context, reserved),
+          child: Container(
+            padding: const EdgeInsets.all(22),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AppColors.primaryBlue, AppColors.primaryBlueDark],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: AppShapes.extraLargeRadius,
             ),
-            borderRadius: AppShapes.extraLargeRadius,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(
-                    Icons.account_balance_wallet_outlined,
-                    color: Colors.white70,
-                  ),
-                  SizedBox(width: 7),
-                  Text(
-                    'Disponible para usar',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                  Spacer(),
-                  Text(
-                    'Ver detalle',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  SizedBox(width: 3),
-                  Icon(Icons.chevron_right, color: Colors.white70, size: 18),
-                ],
-              ),
-              const SizedBox(height: 7),
-              Text(
-                _money(balances.available),
-                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text(
-                reserved == 0
-                    ? 'Todavía no has separado dinero para ahorros o metas.'
-                    : '${_money(reserved)} están protegidos en ahorros y metas.',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              const SizedBox(height: 14),
-              _MonthlyIncomePanel(
-                members: members,
-                currentUid: currentUid,
-                onEdit: onEditIncome,
-              ),
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.all(13),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: .11),
-                  borderRadius: AppShapes.largeRadius,
-                ),
-                child: Column(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _BalanceCardMetric(
-                            label: 'Total ingresado',
-                            value: balances.income,
-                            icon: Icons.arrow_downward,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _BalanceCardMetric(
-                            label: 'Dinero separado',
-                            value: reserved,
-                            icon: Icons.shield_outlined,
-                          ),
-                        ),
-                      ],
+                    Icon(
+                      Icons.account_balance_wallet_outlined,
+                      color: Colors.white70,
                     ),
-                    const Divider(color: Colors.white24, height: 22),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Este mes entró ${_money(monthlyIncome)}',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                        Text(
-                          'Salió ${_money(monthlyExpenses)}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
+                    SizedBox(width: 7),
+                    Text(
+                      'Disponible para usar',
+                      style: TextStyle(color: Colors.white70),
                     ),
+                    Spacer(),
+                    Text(
+                      'Ver detalle',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    SizedBox(width: 3),
+                    Icon(Icons.chevron_right, color: Colors.white70, size: 18),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 7),
+                Text(
+                  _money(balances.available),
+                  style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  reserved == 0
+                      ? 'Todavía no has separado dinero para ahorros o metas.'
+                      : '${_money(reserved)} están protegidos en ahorros y metas.',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(height: 14),
+                _MonthlyIncomePanel(
+                  incomeGuideKey: incomeGuideKey,
+                  members: members,
+                  currentUid: currentUid,
+                  onEdit: onEditIncome,
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .11),
+                    borderRadius: AppShapes.largeRadius,
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _BalanceCardMetric(
+                              label: 'Total ingresado',
+                              value: balances.income,
+                              icon: Icons.arrow_downward,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _BalanceCardMetric(
+                              label: 'Dinero separado',
+                              value: reserved,
+                              icon: Icons.shield_outlined,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Divider(color: Colors.white24, height: 22),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Este mes entró ${_money(monthlyIncome)}',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          Text(
+                            'Salió ${_money(monthlyExpenses)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1431,11 +1677,13 @@ class _AvailableBalanceCard extends StatelessWidget {
 
 class _MonthlyIncomePanel extends StatelessWidget {
   const _MonthlyIncomePanel({
+    required this.incomeGuideKey,
     required this.members,
     required this.currentUid,
     required this.onEdit,
   });
 
+  final Key incomeGuideKey;
   final List<HouseholdMember> members;
   final String currentUid;
   final VoidCallback? onEdit;
@@ -1467,10 +1715,13 @@ class _MonthlyIncomePanel extends StatelessWidget {
                 ),
               ),
             ),
-            TextButton(
-              onPressed: onEdit,
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-              child: const Text('Mi ingreso'),
+            KeyedSubtree(
+              key: incomeGuideKey,
+              child: TextButton(
+                onPressed: onEdit,
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                child: const Text('Mi ingreso'),
+              ),
             ),
           ],
         ),
@@ -3010,6 +3261,7 @@ class _TransactionDetailRow extends StatelessWidget {
 
 class _PlansTab extends StatelessWidget {
   const _PlansTab({
+    required this.createPlanGuideKey,
     required this.user,
     required this.householdId,
     required this.services,
@@ -3021,6 +3273,7 @@ class _PlansTab extends StatelessWidget {
     required this.onRecordBudgetExpense,
   });
 
+  final Key createPlanGuideKey;
   final AuthUser user;
   final String householdId;
   final AppServices services;
@@ -3081,21 +3334,24 @@ class _PlansTab extends StatelessWidget {
                     trailing:
                         isJunior
                             ? null
-                            : FilledButton.tonalIcon(
-                              key: const Key('create_plan_button'),
-                              onPressed:
-                                  canContribute
-                                      ? () => _addPlan(context)
-                                      : null,
-                              style: FilledButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
+                            : KeyedSubtree(
+                              key: createPlanGuideKey,
+                              child: FilledButton.tonalIcon(
+                                key: const Key('create_plan_button'),
+                                onPressed:
+                                    canContribute
+                                        ? () => _addPlan(context)
+                                        : null,
+                                style: FilledButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
                                 ),
+                                icon: const Icon(Icons.add, size: 19),
+                                label: const Text('Crear plan'),
                               ),
-                              icon: const Icon(Icons.add, size: 19),
-                              label: const Text('Crear plan'),
                             ),
                   ),
                   const SizedBox(height: 14),
@@ -3874,6 +4130,7 @@ class _ProfileTab extends StatefulWidget {
     required this.themeController,
     required this.household,
     required this.onSignOut,
+    required this.onOpenTutorial,
   });
 
   final AuthUser user;
@@ -3882,6 +4139,7 @@ class _ProfileTab extends StatefulWidget {
   final ThemeController themeController;
   final Household household;
   final Future<void> Function() onSignOut;
+  final VoidCallback onOpenTutorial;
 
   @override
   State<_ProfileTab> createState() => _ProfileTabState();
@@ -4074,16 +4332,12 @@ class _ProfileTabState extends State<_ProfileTab> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.school_outlined),
-                  title: const Text('Tutorial de la app'),
-                  subtitle: const Text('Repasa las funciones principales'),
+                  title: const Text('Guía interactiva'),
+                  subtitle: const Text(
+                    'Repasa la lógica sobre la interfaz real',
+                  ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap:
-                      () => Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          builder:
-                              (_) => AppTutorialScreen(onFinished: () async {}),
-                        ),
-                      ),
+                  onTap: widget.onOpenTutorial,
                 ),
               ),
               const SizedBox(height: 16),
@@ -5060,6 +5314,10 @@ class _TransactionFormState extends State<_TransactionForm> {
                     : TransactionCategories.suggestFor(
                       _type,
                       _descriptionController.text,
+                      customCategories: _customCategories
+                          .where((category) => category.type == _type)
+                          .map((category) => category.name),
+                      previousTransactions: _transactions,
                     ),
           ),
     );
@@ -5082,6 +5340,10 @@ class _TransactionFormState extends State<_TransactionForm> {
     final suggestion = TransactionCategories.suggestFor(
       _type,
       _descriptionController.text,
+      customCategories: _customCategories
+          .where((category) => category.type == _type)
+          .map((category) => category.name),
+      previousTransactions: _transactions,
     );
     if (suggestion != _category) setState(() => _category = suggestion);
   }

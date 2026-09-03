@@ -32,10 +32,12 @@ class HouseholdGate extends StatefulWidget {
 class _HouseholdGateState extends State<HouseholdGate> {
   late Stream<String?> _householdStream;
   String? _confirmedHouseholdId;
+  late bool _initialGuidePending;
 
   @override
   void initState() {
     super.initState();
+    _initialGuidePending = widget.user.needsOnboarding;
     _householdStream = widget.services.households.watchActiveHouseholdId(
       widget.user.uid,
     );
@@ -44,8 +46,14 @@ class _HouseholdGateState extends State<HouseholdGate> {
   @override
   void didUpdateWidget(covariant HouseholdGate oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.user.needsOnboarding) {
+      _initialGuidePending = true;
+    }
     if (oldWidget.user.uid != widget.user.uid ||
         oldWidget.services.households != widget.services.households) {
+      if (oldWidget.user.uid != widget.user.uid) {
+        _initialGuidePending = widget.user.needsOnboarding;
+      }
       _confirmedHouseholdId = null;
       _householdStream = widget.services.households.watchActiveHouseholdId(
         widget.user.uid,
@@ -94,6 +102,7 @@ class _HouseholdGateState extends State<HouseholdGate> {
           services: widget.services,
           themeController: widget.themeController,
           onSignOut: widget.onSignOut,
+          showInitialGuide: _initialGuidePending,
         );
       },
     );
@@ -108,6 +117,7 @@ class _HouseholdKeyGate extends StatefulWidget {
     required this.services,
     required this.themeController,
     required this.onSignOut,
+    required this.showInitialGuide,
   });
 
   final String householdId;
@@ -115,6 +125,7 @@ class _HouseholdKeyGate extends StatefulWidget {
   final AppServices services;
   final ThemeController themeController;
   final Future<void> Function() onSignOut;
+  final bool showInitialGuide;
 
   @override
   State<_HouseholdKeyGate> createState() => _HouseholdKeyGateState();
@@ -170,6 +181,7 @@ class _HouseholdKeyGateState extends State<_HouseholdKeyGate> {
           services: widget.services,
           themeController: widget.themeController,
           onSignOut: widget.onSignOut,
+          showInitialGuide: widget.showInitialGuide,
         );
       },
     );
